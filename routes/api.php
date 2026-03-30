@@ -31,6 +31,7 @@ use App\Http\Controllers\Api\AdvisoryClassController;
 // Student
 use App\Http\Controllers\Api\StudentClassroomController;
 use App\Http\Controllers\Api\StudentFormController;
+use App\Http\Controllers\Api\StudentELibraryController;
 
 // Public Auth Routes (Hindi kailangan ng token)
 Route::post('/login', [AuthController::class, 'login']);
@@ -185,6 +186,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/student/forms/{id}', [StudentFormController::class, 'show']);
     Route::post('/student/forms/{id}/submit', [StudentFormController::class, 'submit']);
     Route::get('/student/classrooms/{id}/grades', [StudentClassroomController::class, 'grades']);
+
+    // Student E-Library
+    Route::get('student/e-libraries', [StudentELibraryController::class, 'index']);
 
     // Kunin ang current logged-in user data
     Route::get('/user', function (Request $request) {
