@@ -30,6 +30,7 @@ use App\Http\Controllers\Api\FormQuestionController;
 use App\Http\Controllers\Api\ELibraryController;
 use App\Http\Controllers\Api\AdvisoryClassController;
 use App\Http\Controllers\Api\TeacherFileController;
+use App\Http\Controllers\Api\TeacherCalendarController;
 // Student
 use App\Http\Controllers\Api\StudentClassroomController;
 use App\Http\Controllers\Api\StudentFormController;
@@ -189,6 +190,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Teacher File
     Route::get('teacher/files', [TeacherFileController::class, 'index']);
     Route::post('teacher/files/download-zip', [TeacherFileController::class, 'downloadZip']);
+
+    // Teacher Calendar
+    Route::get('calendar/teacher/events', [TeacherCalendarController::class, 'events']);
 
     // Student Classrooms
     Route::get('/student/classrooms', [StudentClassroomController::class, 'index']);
