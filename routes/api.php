@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\StudentClassroomController;
 use App\Http\Controllers\Api\StudentFormController;
 use App\Http\Controllers\Api\StudentELibraryController;
 use App\Http\Controllers\Api\StudentGradeController;
+use App\Http\Controllers\Api\StudentFileController;
 
 // Public Auth Routes (Hindi kailangan ng token)
 Route::post('/login', [AuthController::class, 'login']);
@@ -193,6 +194,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Student Grades
     Route::get('student/grades', [StudentGradeController::class, 'index']);
+
+    // Student Files
+    Route::get('student/files', [StudentFileController::class, 'index']);
+    Route::post('student/files/download-zip', [StudentFileController::class, 'downloadZip']);
 
     // Kunin ang current logged-in user data
     Route::get('/user', function (Request $request) {
