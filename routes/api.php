@@ -37,6 +37,7 @@ use App\Http\Controllers\Api\StudentFormController;
 use App\Http\Controllers\Api\StudentELibraryController;
 use App\Http\Controllers\Api\StudentGradeController;
 use App\Http\Controllers\Api\StudentFileController;
+use App\Http\Controllers\Api\StudentCalendarController;
 
 // Public Auth Routes (Hindi kailangan ng token)
 Route::post('/login', [AuthController::class, 'login']);
@@ -214,6 +215,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Student Files
     Route::get('student/files', [StudentFileController::class, 'index']);
     Route::post('student/files/download-zip', [StudentFileController::class, 'downloadZip']);
+
+    // Student Calendar
+    Route::get('calendar/student/events', [StudentCalendarController::class, 'events']);
 
     // Kunin ang current logged-in user data
     Route::get('/user', function (Request $request) {
