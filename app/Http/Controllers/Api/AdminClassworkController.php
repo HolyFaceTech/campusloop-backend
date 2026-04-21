@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Classwork;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -38,12 +39,12 @@ class AdminClassworkController extends Controller
         ]);
 
         // KUNIN ANG CLASSWORKS BAGO BURAHIN PARA SA NOTIF
-        // (Isasama natin ang classroom, subject, at creator para makuha ang names)
+        // (Isasama ang classroom, subject, at creator para makuha ang names)
         $classworks = Classwork::with(['classroom.subject', 'classroom.creator'])
             ->whereIn('id', $request->ids)
             ->get();
 
-        // TULUYAN NANG BURAHIN (Soft Delete)
+        // Soft Delete
         Classwork::whereIn('id', $request->ids)->delete();
 
         // NOTIFICATION LOGIC 
@@ -74,7 +75,7 @@ class AdminClassworkController extends Controller
                     'id' => Str::uuid()->toString(),
                     'user_id' => $teacherId, // Ise-send natin diretso sa Teacher na may-ari ng class
                     'description' => $description,
-                    'link' => "/teacher/recycle-bin", // Pabalik sa recycle bin para makita nila
+                    'link' => "/teacher/recycle-bin", // Pabalik sa recycle bin para makita
                     'is_read' => false,
                     'created_at' => $currentTime,
                     'updated_at' => $currentTime,
@@ -82,11 +83,21 @@ class AdminClassworkController extends Controller
             }
         }
 
-        // ISAHANG BULK INSERT PARA MABILIS
+        // ISAHANG BULK INSERT
         if (!empty($notifications)) {
             foreach (array_chunk($notifications, 500) as $chunk) {
                 DB::table('notifications')->insert($chunk);
             }
+        }
+
+        $count = count($request->ids);
+
+        if ($count > 0) {
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Deleted Classworks',
+                'description' => "Moved {$count} selected classwork(s) to the recycle bin."
+            ]);
         }
 
         return response()->json(['message' => 'Selected classworks moved to recycle bin.'], 200);
@@ -121,14 +132,14 @@ class AdminClassworkController extends Controller
                 ->orderBy('last_name', 'asc') // Arrange alphabetically by default
                 ->get();
 
-            // Kunin ang mga submissions nila
+            // Kunin ang mga submissions
             $submissions = DB::table('classwork_submissions')
                 ->where('classwork_id', $id)
                 ->whereIn('student_id', $studentIds)
                 ->get()
                 ->keyBy('student_id');
 
-            // Kunin ang mga files ng mga submissions (TINAMA YUNG 'attachable_type' DITO)
+            // Kunin ang mga files ng mga submissions (TINAMA YUNG 'attachable_type')
             $submissionIds = $submissions->pluck('id')->toArray();
             $files = [];
             if (!empty($submissionIds)) {

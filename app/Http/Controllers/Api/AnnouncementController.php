@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Announcement;
 use App\Models\File;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use App\Models\Comment;
 use Illuminate\Support\Facades\DB;
@@ -99,7 +100,7 @@ class AnnouncementController extends Controller
             $notifications[] = [
                 'id' => Str::uuid()->toString(),
                 'user_id' => $user->id,
-                'description' => $descriptionText, // Gagamitin natin yung variable text mula sa itaas
+                'description' => $descriptionText, // Gagamitin yung variable text mula sa itaas
                 'link' => $link,
                 'is_read' => false,
                 'created_at' => $currentTime,
@@ -113,6 +114,12 @@ class AnnouncementController extends Controller
                 DB::table('notifications')->insert($chunk);
             }
         }
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Created Announcement',
+            'description' => "Posted a new global announcement: '{$announcementTitle}'."
+        ]);
         
         return response()->json(['message' => 'Announcement posted successfully!'], 201);
     }
@@ -160,6 +167,15 @@ class AnnouncementController extends Controller
                 ]);
             }
         }
+
+        $announcementTitle = Str::limit($announcement->title, 25);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Updated Announcement',
+            'description' => "Updated the global announcement: '{$announcementTitle}'."
+        ]);
+
         return response()->json(['message' => 'Announcement updated successfully!'], 200);
     }
 
@@ -167,7 +183,13 @@ class AnnouncementController extends Controller
     public function destroy(Request $request, $id)
     {
         $announcement = Announcement::where('creator_id', $request->user()->id)->findOrFail($id);
+        $announcementTitle = Str::limit($announcement->title, 25);
         $announcement->delete(); 
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Deleted Announcement',
+            'description' => "Moved the global announcement '{$announcementTitle}' to the recycle bin."
+        ]);
         return response()->json(['message' => 'Moved to recycle bin.'], 200);
     }
 
@@ -175,9 +197,18 @@ class AnnouncementController extends Controller
     public function bulkDelete(Request $request)
     {
         $request->validate(['ids' => 'required|array']);
+        $count = count($request->ids);
         Announcement::where('creator_id', $request->user()->id)
             ->whereIn('id', $request->ids)
             ->delete();
+
+        if ($count > 0) {
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Bulk Deleted Announcements',
+                'description' => "Moved {$count} selected announcements to the recycle bin."
+            ]);
+        }
         return response()->json(['message' => 'Selected items moved to recycle bin.'], 200);
     }
 
@@ -229,7 +260,7 @@ class AnnouncementController extends Controller
             }
         } else {
             // KUNG DIRECT COMMENT SI ADMIN SA POST (Notify participants)
-            // Kukunin natin lahat ng nag-interact sa announcement na ito para ma-notify sila
+            // Kukunin lahat ng nag-interact sa announcement na ito para ma-notify
             $participantIds = $announcement->comments()
                 ->where('user_id', '!=', $currentUser->id)
                 ->pluck('user_id')
@@ -256,6 +287,13 @@ class AnnouncementController extends Controller
                 }
             }
         }
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Commented on Announcement',
+            'description' => "Added a comment/reply on the announcement '{$announcementTitle}'."
+        ]);
+
         return response()->json(['message' => 'Comment posted successfully', 'comment' => $comment], 201);
     }
 
@@ -266,6 +304,12 @@ class AnnouncementController extends Controller
         $comment = Comment::where('user_id', $request->user()->id)->findOrFail($id);
         $comment->update(['content' => $request->content]);
         
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Updated Comment',
+            'description' => "Updated a comment on an announcement thread."
+        ]);
+
         return response()->json(['message' => 'Comment updated successfully']);
     }
 
@@ -274,6 +318,12 @@ class AnnouncementController extends Controller
     {
         $comment = Comment::findOrFail($id);
         $comment->forceDelete(); 
+        
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Deleted Comment',
+            'description' => "Deleted a comment from an announcement thread."
+        ]);
         
         return response()->json(['message' => 'Comment deleted successfully']);
     }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Strand;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 
 class StrandController extends Controller
@@ -11,7 +12,7 @@ class StrandController extends Controller
     // View Strand
     public function index()
     {
-        // Kukunin lahat ng strands + bibilangin kung ilang students ang naka-enroll dito
+        // Kukunin lahat ng strands + bibilangin kung ilang students ang naka-enroll
         $strands = Strand::withCount(['users' => function ($query) {
             $query->where('role', 'student');
         }])->orderBy('name', 'asc')->get();
@@ -27,7 +28,15 @@ class StrandController extends Controller
             'description' => 'required|string'
         ]);
 
-        Strand::create($validated);
+        // Strand::create($validated);
+        $strand = Strand::create($validated);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Created Strand',
+            'description' => "Created a new academic strand: {$strand->name}."
+        ]);
+
         return response()->json(['message' => 'Strand created successfully!'], 201);
     }
 
@@ -42,13 +51,27 @@ class StrandController extends Controller
         ]);
 
         $strand->update($validated);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Updated Strand',
+            'description' => "Updated the details of academic strand: {$strand->name}."
+        ]);
+
         return response()->json(['message' => 'Strand updated successfully!'], 200);
     }
 
     // Delete Strand
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
         $strand = Strand::findOrFail($id);
+        
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Deleted Strand',
+            'description' => "Moved academic strand '{$strand->name}' to the recycle bin."
+        ]);
+
         $strand->delete(); // Naka SoftDeletes ito
         return response()->json(['message' => 'Strand moved to recycle bin.'], 200);
     }

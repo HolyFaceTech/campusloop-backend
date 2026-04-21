@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use \App\Models\ELibrary;
 use App\Models\User;
+use App\Models\ActivityLog;
 
 class AdminELibraryController extends Controller
 {
@@ -85,6 +86,14 @@ class AdminELibraryController extends Controller
                 }
             }
 
+            $count = count($request->ids);
+
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Approved E-Library Materials',
+                'description' => "Approved {$count} pending E-Library material(s)."
+            ]);
+
             return response()->json(['message' => 'Selected materials approved successfully.'], 200);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Error: ' . $e->getMessage()], 500);
@@ -118,6 +127,15 @@ class AdminELibraryController extends Controller
                     'created_at' => now(), 'updated_at' => now(),
                 ]);
             }
+
+            $count = count($request->ids);
+
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Declined E-Library Materials',
+                'description' => "Declined {$count} pending E-Library material(s) and provided feedback."
+            ]);
+
             return response()->json(['message' => 'Selected materials declined successfully.'], 200);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Error: ' . $e->getMessage()], 500);
@@ -133,7 +151,7 @@ class AdminELibraryController extends Controller
             // KUNIN ANG E-LIBRARIES BAGO BURAHIN PARA SA NOTIF
             $libraries = ELibrary::whereIn('id', $request->ids)->get();
 
-            // TULUYAN NANG BURAHIN (Soft Delete)
+            // Soft Delete
             ELibrary::whereIn('id', $request->ids)->delete(); 
 
             // NOTIFICATION LOGIC 
@@ -155,12 +173,20 @@ class AdminELibraryController extends Controller
                 ];
             }
 
-            // ISAHANG BULK INSERT PARA MABILIS
+            // ISAHANG BULK INSERT
             if (!empty($notifications)) {
                 foreach (array_chunk($notifications, 500) as $chunk) {
                     DB::table('notifications')->insert($chunk);
                 }
             }
+
+            $count = count($request->ids);
+            
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Deleted E-Library Materials',
+                'description' => "Moved {$count} E-Library material(s) to the recycle bin."
+            ]);
 
             return response()->json(['message' => 'Selected materials moved to recycle bin.'], 200);
         } catch (\Exception $e) {

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -57,6 +58,12 @@ class UserController extends Controller
         $folderName = str_replace(' ', '_', strtolower($user->first_name . '_' . $user->last_name . '_' . $user->id));
         Storage::disk('public')->makeDirectory("users_files/{$folderName}");
 
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Created User',
+            'description' => "Created a new {$user->role} account for {$user->first_name} {$user->last_name}."
+        ]);
+
         // SEND WELCOME & VERIFICATION EMAIL
         $verifyLink = env('FRONTEND_URL') . '/verify?id=' . $user->id . '&hash=' . sha1($user->email);
         $loginLink = env('FRONTEND_URL') . '/login';
@@ -109,6 +116,14 @@ class UserController extends Controller
         $user->fill($validated);
         $dirtyAttributes = $user->getDirty(); 
         $user->save();
+
+        if (count($dirtyAttributes) > 0) {
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Updated User',
+                'description' => "Updated the account records of {$user->first_name} {$user->last_name}."
+            ]);
+        }
 
         // FOLDER RENAME LOGIC
         // Kung may nagbago sa First Name o Last Name
@@ -176,6 +191,13 @@ class UserController extends Controller
         }
 
         $user = User::findOrFail($id);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Deleted User',
+            'description' => "Moved {$user->first_name} {$user->last_name} to the recycle bin."
+        ]);
+
         $user->delete(); 
         return response()->json(['message' => 'User moved to recycle bin.'], 200);
     }
@@ -192,6 +214,14 @@ class UserController extends Controller
         if (empty($idsToDelete)) {
             return response()->json(['message' => 'No valid users selected for deletion.'], 400);
         }
+
+        $count = count($idsToDelete);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Bulk Deleted Users',
+            'description' => "Moved {$count} selected users to the recycle bin."
+        ]);
 
         User::whereIn('id', $idsToDelete)->delete(); 
         return response()->json(['message' => 'Selected users moved to recycle bin.'], 200);

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Subject;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 
 class SubjectController extends Controller
@@ -27,7 +28,15 @@ class SubjectController extends Controller
             'semester' => 'required|in:1st,2nd'  // Enum 1st, 2nd 
         ]);
 
-        Subject::create($validated);
+        // Subject::create($validated);
+        $subject = Subject::create($validated);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Created Subject',
+            'description' => "Created a new subject: {$subject->code} - {$subject->description}."
+        ]);
+
         return response()->json(['message' => 'Subject created successfully!'], 201);
     }
 
@@ -45,13 +54,27 @@ class SubjectController extends Controller
         ]);
 
         $subject->update($validated);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Updated Subject',
+            'description' => "Updated the details of subject: {$subject->code}."
+        ]);
+
         return response()->json(['message' => 'Subject updated successfully!'], 200);
     }
 
     // Delete Subject
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
         $subject = Subject::findOrFail($id);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Deleted Subject',
+            'description' => "Moved subject '{$subject->code}' to the recycle bin."
+        ]);
+
         $subject->delete();
         return response()->json(['message' => 'Subject moved to recycle bin.'], 200);
     }
@@ -60,6 +83,16 @@ class SubjectController extends Controller
     public function bulkDelete(Request $request)
     {
         $request->validate(['ids' => 'required|array']);
+        $count = count($request->ids);
+
+        if ($count > 0) {
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Bulk Deleted Subjects',
+                'description' => "Moved {$count} selected subjects to the recycle bin."
+            ]);
+        }
+
         Subject::whereIn('id', $request->ids)->delete();
         return response()->json(['message' => 'Selected subjects moved to recycle bin.'], 200);
     }

@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\AdminFileController;
 use App\Http\Controllers\Api\AdminNotificationController;
 use App\Http\Controllers\Api\AdminDashboardController;
 use App\Http\Controllers\Api\AdminRecycleBinController;
+use App\Http\Controllers\Api\ActivityLogController;
 
 // Teacher
 use App\Http\Controllers\Api\ClassroomController;
@@ -165,6 +166,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/recycle-bin', [AdminRecycleBinController::class, 'index']);
     Route::post('/admin/recycle-bin/restore', [AdminRecycleBinController::class, 'restore']);
     Route::post('/admin/recycle-bin/force-delete', [AdminRecycleBinController::class, 'forceDelete']);
+
+    // Admin Activity Logs
+    Route::get('/admin/activity-logs', [ActivityLogController::class, 'indexAdmin']);
 
     // Teacher Classrooms
     Route::get('/classrooms', [ClassroomController::class, 'index']);

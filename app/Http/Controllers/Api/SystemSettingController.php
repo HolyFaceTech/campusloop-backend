@@ -15,6 +15,7 @@ use App\Models\Form;
 use App\Models\Announcement;
 use App\Models\File;
 use App\Models\ELibrary;
+use App\Models\ActivityLog;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Auth;
 
@@ -46,6 +47,12 @@ class SystemSettingController extends Controller
             'is_active' => true
         ]);
 
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Updated System Settings',
+            'description' => "Set the active School Year to {$newSetting->school_year} and Semester to {$newSetting->semester} Semester."
+        ]);
+
         return response()->json([
             'message' => 'School Settings successfully updated!',
             'setting' => $newSetting
@@ -53,12 +60,18 @@ class SystemSettingController extends Controller
     }
 
     // Reset School Setting
-    public function reset()
+    public function reset(Request $request)
     {
         $activeSetting = SystemSetting::where('is_active', true)->first();
         
         if ($activeSetting) {
             $activeSetting->delete();
+
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Reset System Settings',
+                'description' => "Cleared the active School Year and Semester configurations."
+            ]);
         }
 
         return response()->json(['message' => 'School settings have been completely reset.'], 200);
@@ -68,7 +81,7 @@ class SystemSettingController extends Controller
     public function generateReport()
     {
         try {
-            // Kukunin natin ang current user na nag-click ng print
+            // Kukunin ang current user na nag-click ng print
             $user = Auth::user();
             $generatorName = $user ? $user->first_name . ' ' . $user->last_name : 'Administrator';
 
@@ -131,6 +144,14 @@ class SystemSettingController extends Controller
                 'teachers' => $teachers 
             ];
 
+            if ($user) {
+                ActivityLog::create([
+                    'user_id' => $user->id,
+                    'action' => 'Generated Report',
+                    'description' => "Generated and downloaded the Comprehensive System Analytics Report."
+                ]);
+            }
+
             // Generate PDF
             $pdf = Pdf::loadView('print.report', $data);
 
@@ -143,7 +164,7 @@ class SystemSettingController extends Controller
     }
 
     // MAINTENANCE MODE TOGGLE
-    public function toggleMaintenance()
+    public function toggleMaintenance(Request $request)
     {
         try {
             $activeSetting = SystemSetting::where('is_active', true)->first();
@@ -155,11 +176,18 @@ class SystemSettingController extends Controller
             // Toggle ang boolean value
             $activeSetting->maintenance_mode = !$activeSetting->maintenance_mode;
             
-            // Lagyan ng timestamp kung kailan nag-ON
+            // timestamp kung kailan nag-ON
             $activeSetting->maintenance_started_at = $activeSetting->maintenance_mode ? now() : null;
             $activeSetting->save();
 
             $status = $activeSetting->maintenance_mode ? 'enabled' : 'disabled';
+            $statusText = $activeSetting->maintenance_mode ? 'ON' : 'OFF';
+
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Toggled Maintenance Mode',
+                'description' => "Turned {$statusText} the system maintenance mode loop."
+            ]);
 
             return response()->json([
                 'message' => "Maintenance mode successfully $status.",

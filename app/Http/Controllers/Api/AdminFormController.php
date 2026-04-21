@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Form;
 use App\Models\FormSubmission;
+use App\Models\User;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -27,7 +29,7 @@ class AdminFormController extends Controller
             // KUNIN ANG FORMS BAGO BURAHIN PARA SA NOTIF
             $forms = Form::whereIn('id', $request->ids)->get();
 
-            // TULUYAN NANG BURAHIN (Soft Delete)
+            // Soft Delete
             Form::whereIn('id', $request->ids)->delete();
 
             // NOTIFICATION LOGIC 
@@ -54,11 +56,21 @@ class AdminFormController extends Controller
                 }
             }
 
-            // ISAHANG BULK INSERT PARA MABILIS
+            // ISAHANG BULK INSERT
             if (!empty($notifications)) {
                 foreach (array_chunk($notifications, 500) as $chunk) {
                     DB::table('notifications')->insert($chunk);
                 }
+            }
+
+            $count = count($request->ids);
+
+            if ($count > 0) {
+                ActivityLog::create([
+                    'user_id' => $request->user()->id,
+                    'action' => 'Deleted Forms',
+                    'description' => "Moved {$count} selected form(s) to the recycle bin."
+                ]);
             }
 
             return response()->json(['message' => 'Forms moved to recycle bin.'], 200);
@@ -102,11 +114,11 @@ class AdminFormController extends Controller
     public function unsubmit(Request $request, $formId, $submissionId) 
     {
         try {
-            $submission = \App\Models\FormSubmission::findOrFail($submissionId);
+            $submission = FormSubmission::findOrFail($submissionId);
             $studentId = $submission->student_id;
             
-            // Kunin ang student user para makuha natin ang pangalan niya para sa notification ni teacher
-            $student = \App\Models\User::find($studentId);
+            // Kunin ang student user para makuha ang pangalan para sa notification ni teacher
+            $student = User::find($studentId);
 
             // KUNIN ANG DETAILS BAGO BURAHIN PARA SA NOTIF
             $form = DB::table('forms')->where('id', $formId)->first();
@@ -118,7 +130,7 @@ class AdminFormController extends Controller
             // Alisin ang mismong submission record NANG PERMANENTE (Hard Delete)
             $submission->forceDelete();
 
-            // Hanapin ang classwork na nakakabit sa form na ito at alisin din ang classwork_submission record niya
+            // Hanapin ang classwork na nakakabit sa form na ito at alisin din ang classwork_submission record
             if ($classwork) {
                 DB::table('classwork_submissions')
                     ->where('classwork_id', $classwork->id)
@@ -174,11 +186,17 @@ class AdminFormController extends Controller
                     ];
                 }
 
-                // Isahang Insert para mabilis!
+                // Isahang Insert
                 if (!empty($notifications)) {
                     DB::table('notifications')->insert($notifications);
                 }
             }
+
+            ActivityLog::create([
+                'user_id' => $admin->id,
+                'action' => 'Reset Student Submission',
+                'description' => "Reset the submission of {$studentName} for the form '{$formName}'."
+            ]);
 
             return response()->json(['message' => 'Student submission removed permanently and notified both teacher and student.'], 200);
         } catch (\Exception $e) {
@@ -191,6 +209,12 @@ class AdminFormController extends Controller
     {
         $form = Form::with(['creator', 'questions'])->findOrFail($id);
         $admin = $request->user(); 
+
+        ActivityLog::create([
+            'user_id' => $admin->id,
+            'action' => 'Printed Blank Form',
+            'description' => "Generated a print view for the form '{$form->name}'."
+        ]);
         
         $html = view('print.teacherform', compact('form', 'admin'))->render();
         return response($html)->header('Content-Type', 'text/html');
@@ -200,8 +224,16 @@ class AdminFormController extends Controller
     public function printStudentForm(Request $request, $formId, $submissionId)
     {
         $form = Form::with(['questions'])->findOrFail($formId);
-        $submission = \App\Models\FormSubmission::with(['student', 'answers'])->findOrFail($submissionId);
+        $submission = FormSubmission::with(['student', 'answers'])->findOrFail($submissionId);
         $admin = $request->user(); 
+
+        $studentName = $submission->student ? $submission->student->first_name . ' ' . $submission->student->last_name : 'a student';
+
+        ActivityLog::create([
+            'user_id' => $admin->id,
+            'action' => 'Printed Student Submission',
+            'description' => "Generated a print view for {$studentName}'s submission in '{$form->name}'."
+        ]);
 
         $html = view('print.studentform', compact('form', 'submission', 'admin'))->render();
         return response($html)->header('Content-Type', 'text/html');

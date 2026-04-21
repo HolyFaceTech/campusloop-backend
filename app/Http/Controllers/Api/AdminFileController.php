@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\File;
+use App\Models\ActivityLog;
 use Illuminate\Support\Facades\Storage;
 use ZipArchive;
 use Illuminate\Support\Facades\DB;
@@ -117,6 +118,14 @@ class AdminFileController extends Controller
             $zip->close();
         }
 
+        $count = count($request->file_ids);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Downloaded Files',
+            'description' => "Downloaded a ZIP archive containing {$count} system file(s)."
+        ]);
+
         return response()->download($zipPath)->deleteFileAfterSend(true);
     }
 
@@ -129,7 +138,7 @@ class AdminFileController extends Controller
             // KUNIN ANG FILES KASAMA ANG OWNER BAGO BURAHIN
             $files = File::with('owner')->whereIn('id', $request->file_ids)->get();
 
-            // TULUYAN NANG BURAHIN (Soft Delete)
+            // Soft Delete
             File::whereIn('id', $request->file_ids)->delete();
 
             // NOTIFICATION LOGIC 
@@ -172,12 +181,20 @@ class AdminFileController extends Controller
                 }
             }
 
-            // ISAHANG BULK INSERT PARA MABILIS
+            // ISAHANG BULK INSERT
             if (!empty($notifications)) {
                 foreach (array_chunk($notifications, 500) as $chunk) {
                     DB::table('notifications')->insert($chunk);
                 }
             }
+
+            $count = count($request->file_ids);
+
+            ActivityLog::create([
+                'user_id' => $actor->id,
+                'action' => 'Deleted System Files',
+                'description' => "Moved {$count} file(s) from the File Management system to the recycle bin."
+            ]);
 
             return response()->json(['message' => 'Files moved to recycle bin.'], 200);
         } catch (\Exception $e) {

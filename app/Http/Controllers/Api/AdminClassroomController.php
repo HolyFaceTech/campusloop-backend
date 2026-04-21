@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Classroom;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -34,7 +35,7 @@ class AdminClassroomController extends Controller
         // KUNIN ANG CLASSROOMS BAGO BURAHIN PARA SA NOTIF
         $classrooms = Classroom::with('subject')->whereIn('id', $request->ids)->get();
 
-        // TULUYAN NANG BURAHIN (Soft Delete)
+        // Soft Delete
         Classroom::whereIn('id', $request->ids)->delete();
 
         // NOTIFICATION LOGIC (DELETED CLASSROOM)
@@ -54,7 +55,7 @@ class AdminClassroomController extends Controller
                     'id' => Str::uuid()->toString(),
                     'user_id' => $teacherId,
                     'description' => "Admin {$adminName} deleted your classroom {$subjectName} ({$sectionName}). It was moved to the Recycle Bin.",
-                    'link' => "/teacher/recycle-bin", // Link papunta sa recycle bin para makita nila
+                    'link' => "/teacher/recycle-bin", // Link papunta sa recycle bin para makita
                     'is_read' => false,
                     'created_at' => $currentTime,
                     'updated_at' => $currentTime,
@@ -62,11 +63,21 @@ class AdminClassroomController extends Controller
             }
         }
 
-        // ISAHANG BULK INSERT PARA MABILIS
+        // Bulk insert
         if (!empty($notifications)) {
             foreach (array_chunk($notifications, 500) as $chunk) {
                 DB::table('notifications')->insert($chunk);
             }
+        }
+
+        $count = count($request->ids);
+
+        if ($count > 0) {
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Deleted Classrooms',
+                'description' => "Moved {$count} selected classroom(s) to the recycle bin."
+            ]);
         }
 
         return response()->json(['message' => 'Selected classrooms moved to recycle bin.'], 200);

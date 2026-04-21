@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Classroom;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\User;
@@ -79,6 +80,14 @@ class AdminClassroomStudentController extends Controller
             }
         }
 
+        $count = count($request->student_ids);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Approved Classroom Students',
+            'description' => "Approved {$count} student(s) to join the classroom {$subjectName} ({$sectionName})."
+        ]);
+
         return response()->json(['message' => 'Students approved successfully.'], 200);
     }
 
@@ -150,6 +159,14 @@ class AdminClassroomStudentController extends Controller
                 DB::table('notifications')->insert($chunk);
             }
         }
+
+        $count = count($request->student_ids);
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Removed/Declined Classroom Students',
+            'description' => "Removed or declined {$count} student(s) from the classroom {$subjectName} ({$sectionName})."
+        ]);
 
         return response()->json(['message' => 'Students removed successfully.'], 200);
     }

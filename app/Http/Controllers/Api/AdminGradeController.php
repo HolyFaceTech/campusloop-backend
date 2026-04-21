@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\User;
 use App\Models\FinalGrade;
+use App\Models\ActivityLog;
 use Illuminate\Support\Str;
 
 class AdminGradeController extends Controller
@@ -26,7 +27,7 @@ class AdminGradeController extends Controller
                 $student->has_pending_grades = FinalGrade::where('student_id', $student->id)
                                                 ->where('status', 'pending')
                                                 ->exists();
-                // Bilangin din ilang grades meron sila overall
+                // Bilangin din ilang grades meron overall
                 $student->grades_count = FinalGrade::where('student_id', $student->id)->count();
             }
 
@@ -124,6 +125,12 @@ class AdminGradeController extends Controller
                 'updated_at' => $currentTime,
             ]);
 
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Approved Student Grade',
+                'description' => "Approved the {$subjectName} grade of {$student->first_name} {$student->last_name} for SY {$grade->school_year}."
+            ]);
+
             return response()->json(['message' => 'Grade approved and locked.'], 200);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Backend Error: ' . $e->getMessage()], 500);
@@ -149,6 +156,9 @@ class AdminGradeController extends Controller
 
             $student = User::findOrFail($grade->student_id);
 
+            $subject = DB::table('subjects')->where('id', $grade->subject_id)->first();
+            $subjectName = $subject ? $subject->description : 'Subject';
+
             // THE FOOLPROOF QUERY FOR NOTIFICATIONS
             $advisoryClass = DB::table('advisory_classes')
                 ->join('advisory_student', 'advisory_classes.id', '=', 'advisory_student.advisory_class_id')
@@ -158,8 +168,10 @@ class AdminGradeController extends Controller
                 ->whereNull('advisory_classes.deleted_at')
                 ->select('advisory_classes.id as class_id', 'advisory_classes.section')
                 ->first();
+
             $sectionName = $advisoryClass ? "({$advisoryClass->section})" : "";
             $link = $advisoryClass ? "/teacher/advisory/{$advisoryClass->class_id}" : "/teacher/advisory";
+
             // Notify teacher (Declined)
             DB::table('notifications')->insert([
                 'id' => Str::uuid()->toString(),
@@ -170,6 +182,13 @@ class AdminGradeController extends Controller
                 'created_at' => now(), 
                 'updated_at' => now(),
             ]);
+
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Declined Student Grade',
+                'description' => "Declined the {$subjectName} grade of {$student->first_name} {$student->last_name} and provided feedback."
+            ]);
+
             return response()->json(['message' => 'Grade declined and returned to teacher.'], 200);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Backend Error: ' . $e->getMessage()], 500);

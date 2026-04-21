@@ -13,7 +13,8 @@ use App\Models\Announcement;
 use App\Models\ELibrary;
 use App\Models\Strand;
 use App\Models\Subject;
-use App\Models\AdvisoryClass; // Isinama natin ito!
+use App\Models\AdvisoryClass;
+use App\Models\ActivityLog;
 use Illuminate\Support\Str;
 
 class AdminRecycleBinController extends Controller
@@ -125,15 +126,27 @@ class AdminRecycleBinController extends Controller
     public function restore(Request $request)
     {
         $items = $request->input('items', []); 
+        $restoredCount = 0;
+
         foreach ($items as $item) {
             $model = $this->getModelInstance($item['type']);
             if ($model) {
                 $record = $model->withTrashed()->find($item['id']);
                 if ($record) {
                     $record->restore();
+                    $restoredCount++;
                 }
             }
         }
+
+        if ($restoredCount > 0) {
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Restored Items',
+                'description' => "Restored {$restoredCount} item(s) from the recycle bin back to their original locations."
+            ]);
+        }
+
         return response()->json(['message' => 'Items successfully restored to their original locations.']);
     }
 
@@ -141,15 +154,27 @@ class AdminRecycleBinController extends Controller
     public function forceDelete(Request $request)
     {
         $items = $request->input('items', []);
+        $deletedCount = 0;
+
         foreach ($items as $item) {
             $model = $this->getModelInstance($item['type']);
             if ($model) {
                 $record = $model->withTrashed()->find($item['id']);
                 if ($record) {
                     $record->forceDelete(); // Binubura na talaga sa database
+                    $deletedCount++;
                 }
             }
         }
+
+        if ($deletedCount > 0) {
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Permanently Deleted Items',
+                'description' => "Permanently deleted {$deletedCount} item(s) from the recycle bin."
+            ]);
+        }
+
         return response()->json(['message' => 'Items permanently deleted from the database.']);
     }
 }
