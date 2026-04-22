@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use App\Models\User;
+use App\Models\ActivityLog;
 use App\Rules\Recaptcha;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Support\Facades\DB;
@@ -55,6 +56,13 @@ class AuthController extends Controller
             'current_session_id' => hash('sha256', $token) // Tracking reference
         ]);
 
+        // ACTIVITY LOG TRIGGER: Login
+        ActivityLog::create([
+            'user_id' => $user->id, // Ginamit ang $user->id dahil wala pang Auth state si Request dito
+            'action' => 'Logged In',
+            'description' => 'Successfully logged into the system.'
+        ]);
+
         // Success Response (Redirecting to Dashboard based on role)
         return response()->json([
             'message' => 'Login successful',
@@ -67,6 +75,16 @@ class AuthController extends Controller
     // LOGOUT LOGIC
     public function logout(Request $request)
     {
+        $userId = $request->user()->id;
+
+        // ACTIVITY LOG
+        // Inilagay bago burahin ang token para ma-read pa ang ID
+        ActivityLog::create([
+            'user_id' => $userId,
+            'action' => 'Logged Out',
+            'description' => 'Securely logged out of the system.'
+        ]);
+
         // Burahin ang current token ng user
         $request->user()->currentAccessToken()->delete();
 
@@ -104,6 +122,13 @@ class AuthController extends Controller
             $message->to($request->email);
             $message->subject('Reset Your CampusLoop Password');
         });
+
+        // ACTIVITY LOG 
+        ActivityLog::create([
+            'user_id' => $user->id,
+            'action' => 'Requested Password Reset',
+            'description' => 'Requested a secure link to reset account password.'
+        ]);
 
         return response()->json(['message' => 'Secure reset link has been sent to your email.'], 200);
     }
@@ -149,6 +174,13 @@ class AuthController extends Controller
         // Burahin ang ginamit na token para hindi na magamit ulit
         DB::table('password_reset_tokens')->where('email', $request->email)->delete();
 
+        // ACTIVITY LOG 
+        ActivityLog::create([
+            'user_id' => $user->id,
+            'action' => 'Reset Account Password',
+            'description' => 'Successfully changed the account password.'
+        ]);
+
         // I-return ang status at verification info para alam ng React kung saan ire-redirect
         return response()->json([
             'message' => 'Password has been successfully reset.',
@@ -188,6 +220,13 @@ class AuthController extends Controller
             $message->subject('Verify Your CampusLoop Account');
         });
 
+        // ACTIVITY LOG 
+        ActivityLog::create([
+            'user_id' => $user->id,
+            'action' => 'Requested Verification Email',
+            'description' => 'Requested a new email verification link.'
+        ]);
+
         return response()->json(['message' => 'Verification email sent successfully.'], 200);
     }
 
@@ -212,6 +251,13 @@ class AuthController extends Controller
             $user->update([
                 'email_verified_at' => now(),
                 'status' => 'active' // Automatic magiging active upon verification
+            ]);
+
+            // ACTIVITY LOG 
+            ActivityLog::create([
+                'user_id' => $user->id,
+                'action' => 'Verified Account',
+                'description' => 'Successfully verified email address and activated the account.'
             ]);
         }
 
