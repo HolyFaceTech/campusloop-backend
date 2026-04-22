@@ -257,8 +257,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/student/classrooms/{id}/stream', [StudentClassroomController::class, 'stream']);
     Route::post('/student/classworks/{id}/submit', [StudentClassroomController::class, 'submitWork']);
     Route::post('/student/classworks/{id}/unsubmit', [StudentClassroomController::class, 'unsubmitWork']);
+
+    // Student Form
     Route::get('/student/forms/{id}', [StudentFormController::class, 'show']);
     Route::post('/student/forms/{id}/submit', [StudentFormController::class, 'submit']);
+
+    // Student Classroom Grade
     Route::get('/student/classrooms/{id}/grades', [StudentClassroomController::class, 'grades']);
 
     // Student E-Library
@@ -284,6 +288,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('student/notifications', [StudentNotificationController::class, 'index']);
     Route::put('student/notifications/mark-all-read', [StudentNotificationController::class, 'markAllAsRead']);
     Route::put('student/notifications/{id}/read', [StudentNotificationController::class, 'markAsRead']);
+
+    // Student Activity Log
+    Route::get('student/activity-logs', [ActivityLogController::class, 'indexUser']);
 
     // Kunin ang current logged-in user data
     Route::get('/user', function (Request $request) {

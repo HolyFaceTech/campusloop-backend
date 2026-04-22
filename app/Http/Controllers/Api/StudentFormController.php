@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\Form;
 use App\Models\Classroom;
 use App\Models\Classwork;
+use App\Models\ActivityLog;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -162,6 +163,13 @@ class StudentFormController extends Controller
                 'is_read' => false,
                 'created_at' => now(),
                 'updated_at' => now(),
+            ]);
+
+            // ACTIVITY LOG
+            ActivityLog::create([
+                'user_id' => $studentId,
+                'action' => 'Submitted Quiz/Exam',
+                'description' => "Completed and submitted the form '{$form->name}' in {$subjectName} ({$classroom->section})."
             ]);
 
             return response()->json([

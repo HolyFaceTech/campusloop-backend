@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\Classroom;
 use App\Models\Classwork;
 use App\Models\File; 
+use App\Models\ActivityLog;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -88,6 +89,13 @@ class StudentClassroomController extends Controller
                 'is_read' => false,
                 'created_at' => now(), 
                 'updated_at' => now(),
+            ]);
+
+            // ACTIVITY LOG 
+            ActivityLog::create([
+                'user_id' => $studentId,
+                'action' => 'Requested to Join Classroom',
+                'description' => "Sent a request to join the classroom {$subjectName} ({$classroom->section})."
             ]);
 
             return response()->json(['message' => 'Join request sent! Please wait for your teacher to approve.'], 200);
@@ -205,9 +213,11 @@ class StudentClassroomController extends Controller
             $now = now();
             $status = 'pending';
 
-            if ($classwork->deadline && $now->greaterThan(\Carbon\Carbon::parse($classwork->deadline))) {
+            if ($classwork->deadline && $now->greaterThan(Carbon::parse($classwork->deadline))) {
                 $status = 'late_submission';
             }
+
+            $isResubmission = false;
 
             // RESUBMISSION LOGIC (Overwrite luma kung Returned by Teacher)
             if ($existingSubmission) {
@@ -292,6 +302,15 @@ class StudentClassroomController extends Controller
                 'updated_at' => now(),
             ]);
 
+            // ACTIVITY LOG TRIGGER: Submit Work
+            $logActionText = $isResubmission ? 'Resubmitted Classwork' : 'Submitted Classwork';
+            $cwType = ucfirst($classwork->type);
+            ActivityLog::create([
+                'user_id' => $studentId,
+                'action' => $logActionText,
+                'description' => "Submitted work for the {$cwType} '{$classwork->title}' in {$subjectName} ({$classroom->section})."
+            ]);
+
             return response()->json(['message' => 'Work turned in successfully!'], 200);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Failed to submit work: ' . $e->getMessage()], 500);
@@ -309,7 +328,7 @@ class StudentClassroomController extends Controller
                 return response()->json(['message' => 'Cannot unsubmit a Quiz or Exam form.'], 400);
             }
 
-            if ($classwork->deadline && now()->greaterThan(\Carbon\Carbon::parse($classwork->deadline))) {
+            if ($classwork->deadline && now()->greaterThan(Carbon::parse($classwork->deadline))) {
                 return response()->json(['message' => 'Cannot unsubmit because the deadline has already passed.'], 400);
             }
 
@@ -336,6 +355,11 @@ class StudentClassroomController extends Controller
             DB::table('classwork_submissions')->where('id', $submission->id)->delete();
 
             $classroom = Classroom::find($classwork->classroom_id);
+
+            // KUNIN ANG SUBJECT
+            $subject = DB::table('subjects')->where('id', $classroom->subject_id)->first();
+            $subjectName = $subject ? $subject->description : 'Class';
+
             // Notify Teacher (Unsubmit ang Student work)
             DB::table('notifications')->insert([
                 'id' => Str::uuid()->toString(),
@@ -344,6 +368,14 @@ class StudentClassroomController extends Controller
                 'link' => "/teacher/classrooms/{$classwork->classroom_id}/stream",
                 'is_read' => false,
                 'created_at' => now(), 'updated_at' => now(),
+            ]);
+
+            // ACTIVITY LOG TRIGGER: Unsubmit Work
+            $cwType = ucfirst($classwork->type);
+            ActivityLog::create([
+                'user_id' => $studentId,
+                'action' => 'Unsubmitted Classwork',
+                'description' => "Unsubmitted work for the {$cwType} '{$classwork->title}' in {$subjectName} ({$classroom->section})."
             ]);
 
             return response()->json(['message' => 'Work unsubmitted successfully!'], 200);

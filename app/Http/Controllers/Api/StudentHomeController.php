@@ -8,6 +8,8 @@ use App\Models\Announcement;
 use App\Models\Classwork;
 use App\Models\Classroom;
 use App\Models\Comment;
+use App\Models\User;
+use App\Models\ActivityLog;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 
@@ -210,6 +212,8 @@ class StudentHomeController extends Controller
                 : 'someone';
 
             $description = "{$role}: {$fullName} replied to {$parentName} on '{$announcementTitle}': \"{$snippet}\"";
+            $logAction = 'Replied to Announcement Comment';
+            $logDescription = "Replied to a comment on the announcement '{$announcementTitle}'.";
 
             // NOTIFY THE TEACHER KUNG SA KANYA NI-REPLY
             if ($parentComment && $parentComment->user && $parentComment->user->role === 'teacher') {
@@ -227,10 +231,12 @@ class StudentHomeController extends Controller
         } else {
             // Kung Direct Comment:
             $description = "{$role}: {$fullName} commented on '{$announcementTitle}': \"{$snippet}\"";
+            $logAction = 'Commented on Announcement';
+            $logDescription = "Added a comment on the announcement '{$announcementTitle}'.";
         }
 
         // NOTIFY ADMINS
-        $admins = \App\Models\User::where('role', 'admin')->get();
+        $admins = User::where('role', 'admin')->get();
         foreach ($admins as $admin) {
             DB::table('notifications')->insert([
                 'id' => Str::uuid()->toString(),
@@ -243,6 +249,13 @@ class StudentHomeController extends Controller
             ]);
         }
 
+        // ACTIVITY LOG 
+        ActivityLog::create([
+            'user_id' => $currentUser->id,
+            'action' => $logAction,
+            'description' => $logDescription
+        ]);
+
         return response()->json(['message' => 'Comment posted successfully', 'comment' => $comment], 201);
     }
 
@@ -252,6 +265,14 @@ class StudentHomeController extends Controller
         $request->validate(['content' => 'required|string']);
         $comment = Comment::where('user_id', $request->user()->id)->findOrFail($id);
         $comment->update(['content' => $request->content]);
+
+        // ACTIVITY LOG 
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Updated Comment',
+            'description' => "Updated a comment on a global announcement thread."
+        ]);
+
         return response()->json(['message' => 'Comment updated successfully']);
     }
 
@@ -260,6 +281,14 @@ class StudentHomeController extends Controller
     {
         $comment = Comment::where('user_id', $request->user()->id)->findOrFail($id);
         $comment->forceDelete();
+
+        // ACTIVITY LOG 
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Deleted Comment',
+            'description' => "Deleted a comment from a global announcement thread."
+        ]);
+
         return response()->json(['message' => 'Comment deleted successfully']);
     }
 }
