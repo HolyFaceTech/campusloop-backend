@@ -71,6 +71,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/users/{id}', [UserController::class, 'update']);
     Route::delete('/users/{id}', [UserController::class, 'destroy']);
     Route::post('/users/bulk-delete', [UserController::class, 'bulkDestroy']);
+    Route::post('/users/import', [UserController::class, 'import']);
 
     // Admin Strands
     Route::get('/strands', [StrandController::class, 'index']);

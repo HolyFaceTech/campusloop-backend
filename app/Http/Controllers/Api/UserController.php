@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Strand;
 use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -65,7 +66,9 @@ class UserController extends Controller
         ]);
 
         // SEND WELCOME & VERIFICATION EMAIL
-        $verifyLink = env('FRONTEND_URL') . '/verify?id=' . $user->id . '&hash=' . sha1($user->email);
+        $expires = now()->addHour()->timestamp;
+        $hash = hash_hmac('sha256', $user->email . $expires, config('app.key'));
+        $verifyLink = env('FRONTEND_URL') . '/verify?id=' . $user->id . '&hash=' . $hash . '&expires=' . $expires . '&email=' . urlencode($user->email);
         $loginLink = env('FRONTEND_URL') . '/login';
 
         Mail::send('emails.welcome_user', [
@@ -225,5 +228,133 @@ class UserController extends Controller
 
         User::whereIn('id', $idsToDelete)->delete(); 
         return response()->json(['message' => 'Selected users moved to recycle bin.'], 200);
+    }
+
+    // IMPORT CSV LOGIC
+    public function import(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:csv|max:5120', 
+        ]);
+
+        $file = $request->file('file');
+        
+        // Auto-detect line endings para sa ibat-ibang OS (Mac/Windows/Linux)
+        ini_set('auto_detect_line_endings', true);
+
+        $handle = fopen($file->getPathname(), "r");
+        $header = fgetcsv($handle, 1000, ",");
+        
+        if (!$header) {
+            return response()->json(['message' => 'The CSV file is empty or cannot be read.'], 400);
+        }
+
+        // Tanggalin ang BOM (Byte Order Mark) na idinadagdag ng Excel!
+        $header[0] = preg_replace('/[\xef\xbb\xbf]/', '', $header[0]);
+        
+        $header = array_map('trim', $header);
+        $header = array_map('strtolower', $header);
+
+        $successCount = 0;
+        $skippedCount = 0;
+
+        while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
+            // I-skip kung empty ang buong row (mga blank spaces sa ilalim ng Excel)
+            if (empty(array_filter($data))) continue; 
+            
+            // Kung hindi pantay ang bilang ng column ng header at data, 
+            // aayusin ito para hindi mag-error ang array_combine()
+            if (count($header) !== count($data)) {
+                $data = array_pad($data, count($header), '');
+                $data = array_slice($data, 0, count($header));
+            }
+            
+            $row = array_combine($header, $data);
+            
+            // Tanggalin ang extra spaces sa bawat text
+            $row = array_map(function($value) {
+                return trim($value ?? '');
+            }, $row);
+
+            // I-check kung may laman ang mga required fields
+            if (empty($row['email']) || empty($row['first_name']) || empty($row['last_name'])) {
+                continue;
+            }
+
+            // SKIP IF EMAIL OR LRN ALREADY EXISTS
+            $query = User::where('email', $row['email']);
+            if (!empty($row['lrn'])) {
+                $query->orWhere('lrn', $row['lrn']);
+            }
+            if ($query->exists()) {
+                $skippedCount++;
+                continue; 
+            }
+
+            // CONVERT STRAND NAME TO STRAND ID (Case Insensitive)
+            $strandId = null;
+            $csvStrandName = $row['strand'] ?? $row['strand_name'] ?? null;
+            
+            if (!empty($csvStrandName)) {
+                $strand = Strand::where('name', 'LIKE', $csvStrandName)->first();
+                if ($strand) {
+                    $strandId = $strand->id;
+                }
+            }
+
+            // AUTO-GENERATE RANDOM SECURE PASSWORD
+            $rawPassword = Str::random(12);
+
+            $user = User::create([
+                'first_name' => $row['first_name'],
+                'last_name'  => $row['last_name'],
+                'gender'     => !empty($row['gender']) ? $row['gender'] : 'Not Specified',
+                'birthday'   => !empty($row['birthday']) ? date('Y-m-d', strtotime($row['birthday'])) : '2000-01-01',
+                'email'      => $row['email'],
+                'password'   => Hash::make($rawPassword),
+                'role'       => strtolower($row['role'] ?? 'student'),
+                'status'     => 'inactive',
+                'lrn'        => $row['lrn'] ?? null,
+                'strand_id'  => $strandId,
+            ]);
+
+            // Automatic na gagawan ng folder ang LAHAT ng users
+            $folderName = str_replace(' ', '_', strtolower($user->first_name . '_' . $user->last_name . '_' . $user->id));
+            Storage::disk('public')->makeDirectory("users_files/{$folderName}");
+
+            // SEND WELCOME & VERIFICATION EMAIL 
+            $expires = now()->addHour()->timestamp;
+            $hash = hash_hmac('sha256', $user->email . $expires, config('app.key'));
+            $verifyLink = env('FRONTEND_URL') . '/verify?id=' . $user->id . '&hash=' . $hash . '&expires=' . $expires . '&email=' . urlencode($user->email);
+            $loginLink = env('FRONTEND_URL') . '/login';
+
+            Mail::send('emails.welcome_user', [
+                'user' => $user,
+                'rawPassword' => $rawPassword,
+                'verifyLink' => $verifyLink,
+                'loginLink' => $loginLink
+            ], function($message) use($user) {
+                $message->to($user->email);
+                $message->subject('Welcome to CampusLoop - Your Account Details');
+            });
+
+            $successCount++;
+        }
+        fclose($handle);
+
+        $activityDesc = "Successfully imported {$successCount} new users from a CSV file.";
+        if ($skippedCount > 0) {
+            $activityDesc .= " Skipped {$skippedCount} duplicates.";
+        }
+
+        ActivityLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'Imported Users',
+            'description' => $activityDesc
+        ]);
+
+        return response()->json([
+            'message' => "Import complete! {$successCount} users created. {$skippedCount} skipped. Welcome emails sent."
+        ], 200);
     }
 }
