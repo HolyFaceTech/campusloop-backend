@@ -55,7 +55,7 @@ class AdminClassroomController extends Controller
         $query->orderBy('created_at', $sortOrder);
 
         // Pagination Limit
-        $entries = $request->has('entries') ? (int) $request->entries : 10;
+        $entries = $request->has('entries') ? (int) $request->entries : 12;
 
         return response()->json($query->paginate($entries), 200);
     }

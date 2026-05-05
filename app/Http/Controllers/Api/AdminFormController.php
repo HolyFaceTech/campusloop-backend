@@ -10,21 +10,81 @@ use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 class AdminFormController extends Controller
 {
-    // View All Forms
-    public function index()
+    // SECURITY FEATURE
+    private function checkAdmin(Request $request)
     {
-        $forms = Form::with('creator')->orderBy('created_at', 'desc')->get();
-        return response()->json($forms, 200);
+        return $request->user() && $request->user()->role === 'admin';
+    }
+
+    // View All Forms
+    public function index(Request $request)
+    {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
+        $query = Form::with('creator');
+
+        // SERVER-SIDE SEARCH
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                // Hanapin sa Form Name
+                $q->where('name', 'LIKE', "%{$search}%")
+                  // hanapin sa pangalan ng Teacher
+                  ->orWhereHas('creator', function($q2) use ($search) {
+                      $q2->where('first_name', 'LIKE', "%{$search}%")
+                         ->orWhere('last_name', 'LIKE', "%{$search}%")
+                         ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'LIKE', "%{$search}%");
+                  });
+            });
+        }
+
+        // SERVER-SIDE TEACHER FILTER
+        if ($request->has('teacher') && $request->teacher !== 'all') {
+            $query->where('creator_id', $request->teacher);
+        }
+
+        // SERVER-SIDE SORTING
+        $sortOrder = $request->has('sort') && $request->sort === 'oldest' ? 'asc' : 'desc';
+        $query->orderBy('created_at', $sortOrder);
+
+        // PAGINATION (Default to 12 since Grid ito)
+        $entries = $request->has('entries') ? (int) $request->entries : 12;
+        $paginatedForms = $query->paginate($entries);
+
+        // KUNIN ANG MGA UNIQUE TEACHERS PARA SA DROPDOWN SA FRONTEND
+        $teacherIds = Form::select('creator_id')->distinct()->pluck('creator_id')->filter();
+        $teachers = User::whereIn('id', $teacherIds)
+            ->select('id', 'first_name', 'last_name')
+            ->orderBy('first_name', 'asc')
+            ->get();
+
+        return response()->json([
+            'data' => $paginatedForms->items(),
+            'total' => $paginatedForms->total(),
+            'last_page' => $paginatedForms->lastPage(),
+            'teachers' => $teachers
+        ], 200);
     }
 
     // Bulk Delete (Soft Delete) para sa Forms
     public function destroyBulk(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
-            $request->validate(['ids' => 'required|array']);
+            $request->validate([
+                'ids' => 'required|array|max:100',
+                'ids.*' => 'exists:forms,id'
+            ]);
 
             // KUNIN ANG FORMS BAGO BURAHIN PARA SA NOTIF
             $forms = Form::whereIn('id', $request->ids)->get();
@@ -75,13 +135,18 @@ class AdminFormController extends Controller
 
             return response()->json(['message' => 'Forms moved to recycle bin.'], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Error: ' . $e->getMessage()], 500);
+            Log::error('AdminFormController destroyBulk Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An error occurred while deleting forms.'], 500);
         }
     }
 
     // Inside of Form
-    public function show($id)
+    public function show(Request $request, $id)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         $form = Form::with(['questions' => function ($query) {
             $query->orderBy('created_at', 'asc');
         }])->findOrFail($id);
@@ -90,8 +155,12 @@ class AdminFormController extends Controller
     }
 
     // Student Answers
-    public function respondents($id)
+    public function respondents(Request $request, $id)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+        
         $submissions = FormSubmission::with(['student.strand'])
             ->where('form_id', $id)
             ->orderBy('submitted_at', 'desc')
@@ -113,8 +182,15 @@ class AdminFormController extends Controller
     // UNSUBMIT (ADMIN CONTROL)
     public function unsubmit(Request $request, $formId, $submissionId) 
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
-            $submission = FormSubmission::findOrFail($submissionId);
+            $submission = FormSubmission::where('id', $submissionId)
+                                        ->where('form_id', $formId)
+                                        ->firstOrFail();
+
             $studentId = $submission->student_id;
             
             // Kunin ang student user para makuha ang pangalan para sa notification ni teacher
@@ -199,14 +275,21 @@ class AdminFormController extends Controller
             ]);
 
             return response()->json(['message' => 'Student submission removed permanently and notified both teacher and student.'], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['message' => 'Submission not found or does not belong to this form.'], 404);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to unsubmit: ' . $e->getMessage()], 500);
+            Log::error('AdminFormController unsubmit Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An error occurred while resetting the submission.'], 500);
         }
     }
 
     // Print Teacher Form
     public function printTeacherForm(Request $request, $id)
     {
+        if (!$this->checkAdmin($request)) {
+            abort(403, 'Unauthorized access. Admin privileges required.');
+        }
+
         $form = Form::with(['creator', 'questions'])->findOrFail($id);
         $admin = $request->user(); 
 
@@ -223,8 +306,17 @@ class AdminFormController extends Controller
     // Print Student Answer
     public function printStudentForm(Request $request, $formId, $submissionId)
     {
+        if (!$this->checkAdmin($request)) {
+            abort(403, 'Unauthorized access. Admin privileges required.');
+        }
+
         $form = Form::with(['questions'])->findOrFail($formId);
-        $submission = FormSubmission::with(['student', 'answers'])->findOrFail($submissionId);
+
+        $submission = FormSubmission::with(['student', 'answers'])
+                                    ->where('id', $submissionId)
+                                    ->where('form_id', $formId)
+                                    ->firstOrFail();
+
         $admin = $request->user(); 
 
         $studentName = $submission->student ? $submission->student->first_name . ' ' . $submission->student->last_name : 'a student';
