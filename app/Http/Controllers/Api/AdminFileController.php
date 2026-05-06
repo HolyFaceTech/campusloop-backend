@@ -11,24 +11,51 @@ use Illuminate\Support\Facades\Storage;
 use ZipArchive;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 
 class AdminFileController extends Controller
 {
-    // Kukunin ang lahat ng Users (Teacher & Student) at ang Virtual System Folders
-    public function folders()
+    // SECURITY FEATURE
+    private function checkAdmin(Request $request)
     {
+        return $request->user() && $request->user()->role === 'admin';
+    }
+
+    // FOLDERS
+    public function folders(Request $request)
+    {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
-            $users = User::whereIn('role', ['teacher', 'student'])
-                ->orderBy('role')
-                ->orderBy('first_name')
-                ->get();
-            
-            // Bilangin ang files per owner
-            $fileCounts = File::selectRaw('owner_id, count(*) as total')
+            $query = User::whereIn('role', ['teacher', 'student']);
+
+            // SERVER-SIDE SEARCH
+            if ($request->has('search') && !empty($request->search)) {
+                $search = $request->search;
+                $query->where(function($q) use ($search) {
+                    $q->where('first_name', 'LIKE', "%{$search}%")
+                      ->orWhere('last_name', 'LIKE', "%{$search}%")
+                      ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'LIKE', "%{$search}%")
+                      ->orWhere('role', 'LIKE', "%{$search}%");
+                });
+            }
+
+            $query->orderBy('role', 'asc')->orderBy('first_name', 'asc');
+
+            // PAGINATION (Fixed at 12 entries per page para sa grid)
+            $entries = $request->has('entries') ? (int) $request->entries : 12;
+            $paginatedUsers = $query->paginate($entries);
+
+            // KUNIN LANG ANG FILE COUNTS PARA SA MGA USERS NA NASA CURRENT PAGE
+            $userIds = collect($paginatedUsers->items())->pluck('id');
+            $fileCounts = File::whereIn('owner_id', $userIds)
+                ->selectRaw('owner_id, count(*) as total')
                 ->groupBy('owner_id')
                 ->pluck('total', 'owner_id');
 
-            $folders = $users->map(function($user) use ($fileCounts) {
+            $folders = collect($paginatedUsers->items())->map(function($user) use ($fileCounts) {
                 return [
                     'id' => $user->id,
                     'name' => $user->first_name . ' ' . $user->last_name,
@@ -37,103 +64,180 @@ class AdminFileController extends Controller
                 ];
             });
 
-            // GUMAWA NG VIRTUAL FOLDER PARA SA ANNOUNCEMENTS
-            $announcementCount = File::where('attachable_type', 'like', '%Announcement%')->count();
-            
-            // Ilagay sa pinaka-unahan ang Announcement folder gamit ang prepend
-            $folders->prepend([
-                'id' => 'system_announcements', // Special ID para ma-detect sa userFiles
-                'name' => 'System Announcements',
-                'role' => 'system',
-                'file_count' => $announcementCount
-            ]);
+            // Ipakita lang ang System Announcements folder kung tugma sa search
+            $page = $paginatedUsers->currentPage();
+            $searchKeyword = $request->search ?? '';
+            $matchSystem = empty($searchKeyword) || stripos('system announcements', $searchKeyword) !== false;
 
-            return response()->json($folders, 200);
+            if ($page === 1 && $matchSystem) {
+                $announcementCount = File::where('attachable_type', 'like', '%Announcement%')->count();
+                $folders->prepend([
+                    'id' => 'system_announcements',
+                    'name' => 'System Announcements',
+                    'role' => 'system',
+                    'file_count' => $announcementCount
+                ]);
+            }
+
+            return response()->json([
+                'data' => $folders,
+                'total' => $paginatedUsers->total() + ($page === 1 && $matchSystem ? 1 : 0),
+                'last_page' => $paginatedUsers->lastPage()
+            ], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to fetch folders.'], 500);
+            Log::error('AdminFileController folders Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An error occurred while fetching directories.'], 500);
         }
     }
 
-    // Kukunin ang laman ng folder ng specific user o ng system folder
-    public function userFiles($userId)
+    // FILES
+    public function userFiles(Request $request, $userId)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
-            // CHECK KUNG "SYSTEM ANNOUNCEMENTS" YUNG FOLDER NA BINUBUKSAN
+            // FOLDER TARGET
             if ($userId === 'system_announcements') {
-                $filesQuery = File::where('attachable_type', 'like', '%Announcement%');
+                $query = File::where('attachable_type', 'like', '%Announcement%');
             } else {
-                $filesQuery = File::where('owner_id', $userId);
+                $query = File::where('owner_id', $userId);
             }
 
-            $files = $filesQuery->orderBy('created_at', 'desc')
-                ->get()
-                ->map(function ($file) {
-                    $source = 'Other';
-                    $type = $file->attachable_type ?? '';
-                    
-                    if (str_contains($type, 'ELibrary')) {
-                        $source = 'E-Library';
-                    } elseif (str_contains($type, 'ClassworkSubmission')) {
-                        $source = 'Submission';
-                    } elseif (str_contains($type, 'Classwork')) {
-                        $source = 'Classwork';
-                    } elseif (str_contains($type, 'Announcement')) {
-                        $source = 'Announcement';
-                    }
-                    
-                    $file->source_label = $source;
-                    return $file;
-                });
+            // SERVER-SIDE SEARCH (File Name)
+            if ($request->has('search') && !empty($request->search)) {
+                $query->where('name', 'LIKE', "%{$request->search}%");
+            }
 
-            return response()->json($files, 200);
+            // SERVER-SIDE FILTER (File Type)
+            if ($request->has('type') && $request->type !== 'all') {
+                $type = $request->type;
+                if ($type === 'Announcement') {
+                    $query->where('attachable_type', 'like', '%Announcement%');
+                } elseif ($type === 'Submission') {
+                    $query->where('attachable_type', 'like', '%ClassworkSubmission%');
+                } elseif ($type === 'Classwork') {
+                    $query->where('attachable_type', 'like', '%Classwork%')
+                          ->where('attachable_type', 'not like', '%Submission%');
+                } elseif ($type === 'E-Library') {
+                    $query->where('attachable_type', 'like', '%ELibrary%');
+                } elseif ($type === 'Other') {
+                    $query->whereNull('attachable_type');
+                }
+            }
+
+            // SERVER-SIDE SORTING
+            $sortOrder = $request->has('sort') && $request->sort === 'oldest' ? 'asc' : 'desc';
+            $query->orderBy('created_at', $sortOrder);
+
+            // PAGINATION (Fixed at 12 entries per page)
+            $entries = $request->has('entries') ? (int) $request->entries : 12;
+            $paginatedFiles = $query->paginate($entries);
+
+            // MAP THE RESULTS TO APPEND SOURCE LABEL
+            $files = collect($paginatedFiles->items())->map(function ($file) {
+                $source = 'Other';
+                $type = $file->attachable_type ?? '';
+                
+                if (str_contains($type, 'ELibrary')) {
+                    $source = 'E-Library';
+                } elseif (str_contains($type, 'ClassworkSubmission')) {
+                    $source = 'Submission';
+                } elseif (str_contains($type, 'Classwork')) {
+                    $source = 'Classwork';
+                } elseif (str_contains($type, 'Announcement')) {
+                    $source = 'Announcement';
+                }
+                
+                $file->source_label = $source;
+                return $file;
+            });
+
+            return response()->json([
+                'data' => $files,
+                'total' => $paginatedFiles->total(),
+                'last_page' => $paginatedFiles->lastPage()
+            ], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to fetch files.'], 500);
+            Log::error('AdminFileController userFiles Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An error occurred while fetching files.'], 500);
         }
     }
 
     // Gagawa ng ZIP file para sa mga na-select na files at id-download
     public function downloadZip(Request $request)
     {
-        $request->validate(['file_ids' => 'required|array']);
-
-        $files = File::whereIn('id', $request->file_ids)->get();
-
-        if ($files->isEmpty()) {
-            return response()->json(['message' => 'No files found.'], 404);
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
         }
+        
+        try {
+            $request->validate([
+                'file_ids' => 'required|array|max:50',
+                'file_ids.*' => 'exists:files,id'
+            ]);
 
-        $zip = new ZipArchive;
-        $zipFileName = 'Admin_Export_' . time() . '.zip';
-        $zipPath = storage_path('app/public/' . $zipFileName);
+            $files = File::whereIn('id', $request->file_ids)->get();
 
-        if ($zip->open($zipPath, ZipArchive::CREATE) === TRUE) {
-            foreach ($files as $file) {
-                $rawPath = str_replace('storage/', '', $file->path);
-                $fullPath = storage_path('app/public/' . $rawPath);
-                
-                if (file_exists($fullPath)) {
-                    $zip->addFile($fullPath, $file->name);
-                }
+            if ($files->isEmpty()) {
+                return response()->json(['message' => 'No files found in database.'], 404);
             }
-            $zip->close();
+
+            $zip = new ZipArchive;
+            $zipFileName = 'Admin_Export_' . time() . '.zip';
+            $zipPath = storage_path('app/public/' . $zipFileName);
+            $hasFiles = false; 
+
+            if ($zip->open($zipPath, ZipArchive::CREATE) === TRUE) {
+                foreach ($files as $file) {
+                    $rawPath = str_replace('storage/', '', $file->path);
+                    $fullPath = storage_path('app/public/' . ltrim($rawPath, '/\\'));
+                    
+                    if (file_exists($fullPath)) {
+                        $zip->addFile($fullPath, $file->name);
+                        $hasFiles = true; 
+                    }
+                }
+                $zip->close();
+            }
+
+            if (!$hasFiles || !file_exists($zipPath)) {
+                return response()->json([
+                    'message' => 'The selected files are missing from the server storage.'
+                ], 404);
+            }
+
+            $count = count($request->file_ids);
+
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Downloaded Files',
+                'description' => "Downloaded a ZIP archive containing {$count} system file(s)."
+            ]);
+
+            return response()->download($zipPath)->deleteFileAfterSend(true);
+            
+        } catch (\Exception $e) {
+            Log::error('AdminFileController downloadZip Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An error occurred while creating the ZIP file.'], 500);
         }
-
-        $count = count($request->file_ids);
-
-        ActivityLog::create([
-            'user_id' => $request->user()->id,
-            'action' => 'Downloaded Files',
-            'description' => "Downloaded a ZIP archive containing {$count} system file(s)."
-        ]);
-
-        return response()->download($zipPath)->deleteFileAfterSend(true);
     }
 
     // Soft delete para sa mga selected files
     public function bulkDelete(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
-            $request->validate(['file_ids' => 'required|array']);
+            $request->validate([
+                'file_ids' => 'required|array|max:50',
+                'file_ids.*' => 'exists:files,id'
+            ]);
+
+            DB::beginTransaction();
 
             // KUNIN ANG FILES KASAMA ANG OWNER BAGO BURAHIN
             $files = File::with('owner')->whereIn('id', $request->file_ids)->get();
@@ -196,9 +300,12 @@ class AdminFileController extends Controller
                 'description' => "Moved {$count} file(s) from the File Management system to the recycle bin."
             ]);
 
+            DB::commit();
             return response()->json(['message' => 'Files moved to recycle bin.'], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Error: ' . $e->getMessage()], 500);
+            DB::rollBack();
+            Log::error('AdminFileController bulkDelete Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An error occurred while deleting files.'], 500);
         }
     }
 }
