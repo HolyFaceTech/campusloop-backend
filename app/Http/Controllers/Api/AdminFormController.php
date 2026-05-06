@@ -154,29 +154,54 @@ class AdminFormController extends Controller
         return response()->json($form, 200);
     }
 
-    // Student Answers
+    // Student Answers 
     public function respondents(Request $request, $id)
     {
         if (!$this->checkAdmin($request)) {
             return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
         }
         
-        $submissions = FormSubmission::with(['student.strand'])
-            ->where('form_id', $id)
-            ->orderBy('submitted_at', 'desc')
-            ->get();
+        $query = FormSubmission::with(['student.strand'])
+            ->where('form_id', $id);
 
-        $submissionIds = $submissions->pluck('id');
+       // SERVER-SIDE SEARCH (Pangalan, Email, LRN, o Strand)
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->whereHas('student', function($q) use ($search) {
+                $q->where('users.first_name', 'LIKE', "%{$search}%")
+                  ->orWhere('users.last_name', 'LIKE', "%{$search}%")
+                  ->orWhere(DB::raw("CONCAT(users.first_name, ' ', users.last_name)"), 'LIKE', "%{$search}%")
+                  ->orWhere('users.email', 'LIKE', "%{$search}%")
+                  ->orWhere('users.lrn', 'LIKE', "%{$search}%")
+                  ->orWhereHas('strand', function($qStrand) use ($search) {
+                      $qStrand->where('strands.name', 'LIKE', "%{$search}%");
+                  });
+            });
+        }
+
+        // Pinakabagong submission sa unahan
+        $query->orderBy('submitted_at', 'desc');
+
+        // PAGINATION
+        $entries = $request->has('entries') ? (int) $request->entries : 10;
+        $paginatedSubmissions = $query->paginate($entries);
+
+        // KUNIN LANG ANG MGA ANSWERS NG MGA NASA CURRENT PAGE (Para bumilis ang query)
+        $submissionIds = collect($paginatedSubmissions->items())->pluck('id');
         $answers = DB::table('form_submission_answers')
             ->whereIn('submission_id', $submissionIds)
             ->get()
             ->groupBy('submission_id');
 
-        foreach ($submissions as $submission) {
+        foreach ($paginatedSubmissions->items() as $submission) {
             $submission->answers = isset($answers[$submission->id]) ? $answers[$submission->id] : [];
         }
 
-        return response()->json($submissions, 200);
+        return response()->json([
+            'data' => $paginatedSubmissions->items(),
+            'total' => $paginatedSubmissions->total(),
+            'last_page' => $paginatedSubmissions->lastPage()
+        ], 200);
     }
 
     // UNSUBMIT (ADMIN CONTROL)
@@ -199,6 +224,8 @@ class AdminFormController extends Controller
             // KUNIN ANG DETAILS BAGO BURAHIN PARA SA NOTIF
             $form = DB::table('forms')->where('id', $formId)->first();
             $classwork = DB::table('classworks')->where('form_id', $formId)->first();
+
+            DB::beginTransaction();
 
             // Alisin ang sagot sa form_submission_answers (Hard delete via DB query)
             DB::table('form_submission_answers')->where('submission_id', $submissionId)->delete();
@@ -274,10 +301,13 @@ class AdminFormController extends Controller
                 'description' => "Reset the submission of {$studentName} for the form '{$formName}'."
             ]);
 
+            DB::commit();
             return response()->json(['message' => 'Student submission removed permanently and notified both teacher and student.'], 200);
+
         } catch (ModelNotFoundException $e) {
             return response()->json(['message' => 'Submission not found or does not belong to this form.'], 404);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('AdminFormController unsubmit Error: ' . $e->getMessage());
             return response()->json(['message' => 'An error occurred while resetting the submission.'], 500);
         }
