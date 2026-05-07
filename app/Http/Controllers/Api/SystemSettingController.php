@@ -18,68 +18,106 @@ use App\Models\ELibrary;
 use App\Models\ActivityLog;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class SystemSettingController extends Controller
 {
-    // View School Setting
-    public function index()
+    private function checkAdmin(Request $request)
     {
-        $activeSetting = SystemSetting::where('is_active', true)->first();
-        return response()->json($activeSetting, 200);
+        return $request->user() && $request->user()->role === 'admin';
+    }
+
+    // View School Setting
+    public function index(Request $request)
+    {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
+        try {
+            $activeSetting = SystemSetting::where('is_active', true)->first();
+            return response()->json($activeSetting, 200);
+        } catch (\Exception $e) {
+            // 🚨 FIX 2: INFORMATION LEAKAGE PREVENTION
+            Log::error('SystemSettingController index Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while fetching settings.'], 500);
+        }
     }
 
     // Set School Setting
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'school_year' => ['required', 'string', 'regex:/^\d{4}-\d{4}$/'],
-            'semester' => ['required', 'in:1st,2nd'] 
-        ], [
-            'semester.in' => 'Invalid semester selected. It must be either 1st or 2nd.'
-        ]);
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
 
-        SystemSetting::where('is_active', true)->update(['is_active' => false]);
+        try {
+            $validated = $request->validate([
+                'school_year' => ['required', 'string', 'regex:/^\d{4}-\d{4}$/'],
+                'semester' => ['required', 'in:1st,2nd'] 
+            ], [
+                'semester.in' => 'Invalid semester selected. It must be either 1st or 2nd.'
+            ]);
 
-        $newSetting = SystemSetting::create([
-            'school_year' => $validated['school_year'],
-            'semester' => $validated['semester'],
-            'maintenance_mode' => false,
-            'is_active' => true
-        ]);
+            SystemSetting::where('is_active', true)->update(['is_active' => false]);
 
-        ActivityLog::create([
-            'user_id' => $request->user()->id,
-            'action' => 'Updated System Settings',
-            'description' => "Set the active School Year to {$newSetting->school_year} and Semester to {$newSetting->semester} Semester."
-        ]);
+            $newSetting = SystemSetting::create([
+                'school_year' => $validated['school_year'],
+                'semester' => $validated['semester'],
+                'maintenance_mode' => false,
+                'is_active' => true
+            ]);
 
-        return response()->json([
-            'message' => 'School Settings successfully updated!',
-            'setting' => $newSetting
-        ], 200);
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Updated System Settings',
+                'description' => "Set the active School Year to {$newSetting->school_year} and Semester to {$newSetting->semester} Semester."
+            ]);
+
+            return response()->json([
+                    'message' => 'School Settings successfully updated!',
+                    'setting' => $newSetting
+                ], 200);
+        } catch (\Exception $e) {
+            Log::error('SystemSettingController store Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while saving the settings.'], 500);
+        }
     }
 
     // Reset School Setting
     public function reset(Request $request)
     {
-        $activeSetting = SystemSetting::where('is_active', true)->first();
-        
-        if ($activeSetting) {
-            $activeSetting->delete();
-
-            ActivityLog::create([
-                'user_id' => $request->user()->id,
-                'action' => 'Reset System Settings',
-                'description' => "Cleared the active School Year and Semester configurations."
-            ]);
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
         }
 
-        return response()->json(['message' => 'School settings have been completely reset.'], 200);
+        try {
+            $activeSetting = SystemSetting::where('is_active', true)->first();
+            
+            if ($activeSetting) {
+                $activeSetting->delete();
+
+                ActivityLog::create([
+                    'user_id' => $request->user()->id,
+                    'action' => 'Reset System Settings',
+                    'description' => "Cleared the active School Year and Semester configurations."
+                ]);
+            }
+
+            return response()->json(['message' => 'School settings have been completely reset.'], 200);
+        } catch (\Exception $e) {
+            Log::error('SystemSettingController reset Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while resetting settings.'], 500);
+        }
     }
 
     // PDF REPORT GENERATOR FUNCTION
-    public function generateReport()
+    public function generateReport(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
             // Kukunin ang current user na nag-click ng print
             $user = Auth::user();
@@ -158,14 +196,19 @@ class SystemSettingController extends Controller
             // Download directly to the browser
             return $pdf->download('HolyFace_System_Report_'.date('Y-m-d').'.pdf');
 
-        } catch (\Throwable $e) {
-            return response()->json(['message' => 'Failed to generate report: ' . $e->getMessage()], 500);
+        } catch (\Exception $e) {
+            Log::error('SystemSettingController generateReport Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while generating the report.'], 500);
         }
     }
 
     // MAINTENANCE MODE TOGGLE
     public function toggleMaintenance(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
             $activeSetting = SystemSetting::where('is_active', true)->first();
             
@@ -194,8 +237,9 @@ class SystemSettingController extends Controller
                 'setting' => $activeSetting
             ], 200);
 
-        } catch (\Throwable $e) {
-            return response()->json(['message' => 'Failed to toggle maintenance mode: ' . $e->getMessage()], 500);
+        } catch (\Exception $e) {
+            Log::error('SystemSettingController toggleMaintenance Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while toggling maintenance mode.'], 500);
         }
     }
 }
