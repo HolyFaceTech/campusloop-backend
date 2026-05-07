@@ -9,42 +9,87 @@ use App\Models\User;
 use App\Models\FinalGrade;
 use App\Models\ActivityLog;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 
 class AdminGradeController extends Controller
 {
-    // KUNIN LAHAT NG STUDENTS NA MAY GRADES RECORD
+    // Access Control
+    private function checkAdmin(Request $request)
+    {
+        return $request->user() && $request->user()->role === 'admin';
+    }
+
+    // Student Records
     public function index(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
-            // Kunin lang ang mga students (role='student')
-            $students = User::where('role', 'student')
+            $query = User::where('role', 'student')
                 ->where('status', 'active')
                 ->with('strand')
-                ->get();
+                ->whereExists(function ($q) {
+                    $q->select(DB::raw(1))
+                      ->from('final_grades')
+                      ->whereColumn('final_grades.student_id', 'users.id');
+                });
 
-            // Indicator kung may "pending" grades
-            foreach ($students as $student) {
+            // SERVER-SIDE SEARCH (Pangalan o LRN)
+            if ($request->has('search') && !empty($request->search)) {
+                $search = $request->search;
+                $query->where(function($q) use ($search) {
+                    $q->where('first_name', 'LIKE', "%{$search}%")
+                      ->orWhere('last_name', 'LIKE', "%{$search}%")
+                      ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'LIKE', "%{$search}%")
+                      ->orWhere('lrn', 'LIKE', "%{$search}%");
+                });
+            }
+
+            // SERVER-SIDE STRAND FILTER
+            if ($request->has('strand') && $request->strand !== 'all') {
+                $query->where('strand_id', $request->strand);
+            }
+
+            // SERVER-SIDE GENDER FILTER
+            if ($request->has('gender') && $request->gender !== 'all') {
+                $query->where('gender', $request->gender);
+            }
+
+            // SERVER-SIDE SORTING
+            $sortOrder = $request->has('sort') && $request->sort === 'za' ? 'desc' : 'asc';
+            $query->orderBy('last_name', $sortOrder)->orderBy('first_name', $sortOrder);
+
+            // PAGINATION
+            $entries = $request->has('entries') ? (int) $request->entries : 10;
+            $paginatedStudents = $query->paginate($entries);
+
+            foreach ($paginatedStudents->items() as $student) {
                 $student->has_pending_grades = FinalGrade::where('student_id', $student->id)
                                                 ->where('status', 'pending')
                                                 ->exists();
-                // Bilangin din ilang grades meron overall
                 $student->grades_count = FinalGrade::where('student_id', $student->id)->count();
             }
 
-            // I-filter out yung mga walang grades para malinis ang listahan
-            $studentsWithGrades = $students->filter(function($student) {
-                return $student->grades_count > 0;
-            })->values();
-
-            return response()->json($studentsWithGrades, 200);
+            return response()->json([
+                'data' => $paginatedStudents->items(),
+                'total' => $paginatedStudents->total(),
+                'last_page' => $paginatedStudents->lastPage()
+            ], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Backend Error: ' . $e->getMessage()], 500);
+            Log::error('AdminGradeController index Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while fetching student grades.'], 500);
         }
     }
 
-    // KUNIN ANG SPECIFIC GRADES NG ISANG STUDENT (For the Modal Table)
-    public function showStudentGrades($studentId)
+    // Show Grades
+    public function showStudentGrades(Request $request, $studentId)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
             $grades = DB::table('final_grades')
                 ->join('subjects', 'final_grades.subject_id', '=', 'subjects.id')
@@ -63,17 +108,22 @@ class AdminGradeController extends Controller
 
             return response()->json($grades, 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Backend Error: ' . $e->getMessage()], 500);
+            Log::error('AdminGradeController showStudentGrades Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while fetching specific grades.'], 500);
         }
     }
 
     // Approved Grades
     public function approveGrade(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
             $request->validate(['grade_id' => 'required|uuid']);
-            
-            // Pinalitan natin ng Eloquent Model at findOrFail para mawala ang red lines
+
+            DB::beginTransaction();
             $grade = FinalGrade::findOrFail($request->grade_id);
             
             $grade->update([
@@ -131,22 +181,29 @@ class AdminGradeController extends Controller
                 'description' => "Approved the {$subjectName} grade of {$student->first_name} {$student->last_name} for SY {$grade->school_year}."
             ]);
 
+            DB::commit();
             return response()->json(['message' => 'Grade approved and locked.'], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Backend Error: ' . $e->getMessage()], 500);
+            DB::rollBack();
+            Log::error('AdminGradeController approveGrade Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while approving the grade.'], 500);
         }
     }
 
     // Declined Grades
     public function declineGrade(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
             $request->validate([
                 'grade_id' => 'required|uuid',
                 'feedback' => 'required|string'
             ]);
-            
-            // Pinalitan natin ng Eloquent Model at findOrFail para mawala ang red lines
+
+            DB::beginTransaction();
             $grade = FinalGrade::findOrFail($request->grade_id);
             
             $grade->update([
@@ -189,9 +246,12 @@ class AdminGradeController extends Controller
                 'description' => "Declined the {$subjectName} grade of {$student->first_name} {$student->last_name} and provided feedback."
             ]);
 
+            DB::commit();
             return response()->json(['message' => 'Grade declined and returned to teacher.'], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Backend Error: ' . $e->getMessage()], 500);
+            DB::rollBack();
+            Log::error('AdminGradeController declineGrade Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while declining the grade.'], 500);
         }
     }
 }
