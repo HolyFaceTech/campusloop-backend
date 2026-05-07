@@ -9,26 +9,76 @@ use Illuminate\Support\Str;
 use \App\Models\ELibrary;
 use App\Models\User;
 use App\Models\ActivityLog;
+use Illuminate\Support\Facades\Log;
 
 class AdminELibraryController extends Controller
 {
+    // Access Control Role
+    private function checkAdmin(Request $request)
+    {
+        return $request->user() && $request->user()->role === 'admin';
+    }
+
     // KUNIN LAHAT NG E-LIBRARIES (With Creator & Files)
     public function index(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
-            $eLibraries = ELibrary::with(['creator', 'files'])->orderBy('created_at', 'desc')->get();
-            return response()->json($eLibraries, 200);
+            $query = ELibrary::with(['creator', 'files']);
+
+            // SERVER-SIDE SEARCH (By Title or Creator Name)
+            if ($request->has('search') && !empty($request->search)) {
+                $search = $request->search;
+                $query->where(function($q) use ($search) {
+                    $q->where('title', 'LIKE', "%{$search}%")
+                      ->orWhereHas('creator', function($creatorQuery) use ($search) {
+                          $creatorQuery->where('first_name', 'LIKE', "%{$search}%")
+                                       ->orWhere('last_name', 'LIKE', "%{$search}%")
+                                       ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'LIKE', "%{$search}%");
+                      });
+                });
+            }
+
+            // SERVER-SIDE STATUS FILTER
+            if ($request->has('status') && $request->status !== 'all') {
+                $query->where('status', $request->status);
+            }
+
+            // SERVER-SIDE SORTING
+            $sortOrder = $request->has('sort') && $request->sort === 'oldest' ? 'asc' : 'desc';
+            $query->orderBy('created_at', $sortOrder);
+
+            // PAGINATION 
+            $entries = $request->has('entries') ? (int) $request->entries : 12;
+            $paginatedLibs = $query->paginate($entries);
+
+            return response()->json([
+                'data' => $paginatedLibs->items(),
+                'total' => $paginatedLibs->total(),
+                'last_page' => $paginatedLibs->lastPage()
+            ], 200);
+
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Error: ' . $e->getMessage()], 500);
+            Log::error('AdminELibraryController index Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while fetching materials.'], 500);
         }
     }
 
     // BULK APPROVE
     public function bulkApprove(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
-            $request->validate(['ids' => 'required|array']);
+            $request->validate(['ids' => 'required|array|max:100']);
             
+            DB::beginTransaction();
+
             ELibrary::whereIn('id', $request->ids)->update([
                 'status' => 'approved',
                 'admin_feedback' => null, // Linisin ang feedback kapag in-approve na
@@ -79,7 +129,7 @@ class AdminELibraryController extends Controller
                 }
             }
 
-            // BULK INSERT: Hahatiin by 500s para mabilis
+            // Hahatiin by 500s para mabilis
             if (!empty($notifications)) {
                 foreach (array_chunk($notifications, 500) as $chunk) {
                     DB::table('notifications')->insert($chunk);
@@ -94,21 +144,30 @@ class AdminELibraryController extends Controller
                 'description' => "Approved {$count} pending E-Library material(s)."
             ]);
 
+            DB::commit(); 
             return response()->json(['message' => 'Selected materials approved successfully.'], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Error: ' . $e->getMessage()], 500);
+            DB::rollBack(); 
+            Log::error('AdminELibraryController bulkApprove Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while approving materials.'], 500);
         }
     }
 
     // BULK DECLINE WITH FEEDBACK
     public function bulkDecline(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
             $request->validate([
-                'ids' => 'required|array',
+                'ids' => 'required|array|max:100', 
                 'feedback' => 'required|string'
             ]);
             
+            DB::beginTransaction();
+
             ELibrary::whereIn('id', $request->ids)->update([
                 'status' => 'declined',
                 'admin_feedback' => $request->feedback,
@@ -117,15 +176,23 @@ class AdminELibraryController extends Controller
 
             // NOTIFY TEACHERS (Decline)
             $libraries = ELibrary::whereIn('id', $request->ids)->get();
+            $notifications = [];
+            $currentTime = now()->toDateTimeString();
+
             foreach($libraries as $lib) {
-                DB::table('notifications')->insert([
+                $notifications[] = [
                     'id' => Str::uuid()->toString(),
                     'user_id' => $lib->creator_id,
                     'description' => "Your E-Library material '{$lib->title}' was declined. Feedback: " . Str::limit($request->feedback, 30),
                     'link' => "/teacher/e-library",
                     'is_read' => false,
-                    'created_at' => now(), 'updated_at' => now(),
-                ]);
+                    'created_at' => $currentTime, 
+                    'updated_at' => $currentTime,
+                ];
+            }
+
+            if (!empty($notifications)) {
+                DB::table('notifications')->insert($notifications);
             }
 
             $count = count($request->ids);
@@ -136,17 +203,26 @@ class AdminELibraryController extends Controller
                 'description' => "Declined {$count} pending E-Library material(s) and provided feedback."
             ]);
 
+            DB::commit();
             return response()->json(['message' => 'Selected materials declined successfully.'], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Error: ' . $e->getMessage()], 500);
+            DB::rollBack();
+            Log::error('AdminELibraryController bulkDecline Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while declining materials.'], 500);
         }
     }
 
-    // BULK DELETE (SoftDeletes)
+    // BULK DELETE 
     public function bulkDelete(Request $request)
     {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
-            $request->validate(['ids' => 'required|array']);
+            $request->validate(['ids' => 'required|array|max:100']);
+
+            DB::beginTransaction();
 
             // KUNIN ANG E-LIBRARIES BAGO BURAHIN PARA SA NOTIF
             $libraries = ELibrary::whereIn('id', $request->ids)->get();
@@ -188,9 +264,12 @@ class AdminELibraryController extends Controller
                 'description' => "Moved {$count} E-Library material(s) to the recycle bin."
             ]);
 
+            DB::commit();
             return response()->json(['message' => 'Selected materials moved to recycle bin.'], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Error: ' . $e->getMessage()], 500);
+            DB::rollBack();
+            Log::error('AdminELibraryController bulkDelete Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while deleting materials.'], 500);
         }
     }
 }
