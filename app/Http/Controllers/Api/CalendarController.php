@@ -5,59 +5,91 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Announcement;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class CalendarController extends Controller
 {
+    // access control
+    private function checkAdmin(Request $request)
+    {
+        return $request->user() && $request->user()->role === 'admin';
+    }
+
     // Kukunin lahat ng Announcements at iko-convert sa Calendar Event format
     public function getAdminEvents(Request $request)
     {
-        // ILI-LOAD NATIN ANG FILES RELATIONSHIP
-        $announcements = Announcement::with('files')
-            ->where('creator_id', $request->user()->id)
-            ->get();
-        
-        $events = $announcements->map(function($a) {
-            $status = $a->status;
-            
-            // DYNAMIC HIGHLIGHT COLORS BASE SA STATUS
-            if ($status === 'Pending') {
-                $color = '#fd7e14'; // Orange
-            } elseif ($status === 'Published') {
-                $color = '#198754'; // Green
-            } else {
-                $color = '#6c757d'; // Gray (Done)
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
+        try {
+            $start = $request->query('start');
+            $end = $request->query('end');
+
+            $query = Announcement::with('files')->where('creator_id', $request->user()->id);
+
+            // Kung may date range, i-filter lang ang mga pasok sa buwan na iyon
+            if ($start && $end) {
+                $query->where('publish_from', '<=', $end)
+                      ->where('valid_until', '>=', $start);
             }
 
-            return [
-                'id' => $a->id,
-                'title' => $a->title,
-                'start' => $a->publish_from,
-                'end' => $a->valid_until,
-                'backgroundColor' => $color,
-                'borderColor' => $color,
-                'extendedProps' => [
-                    'type' => 'Announcement',
-                    'content' => $a->content,
-                    'status' => $status,
-                    'link' => $a->link, 
-                    'files' => $a->files 
-                ]
-            ];
-        });
+            $announcements = $query->get();
+            
+            $events = $announcements->map(function($a) {
+                $status = $a->status;
+                
+                if ($status === 'Pending') {
+                    $color = '#fd7e14'; // Orange
+                } elseif ($status === 'Published') {
+                    $color = '#198754'; // Green
+                } else {
+                    $color = '#6c757d'; // Gray (Done)
+                }
 
-        return response()->json($events, 200);
+                return [
+                    'id' => $a->id,
+                    'title' => $a->title,
+                    'start' => $a->publish_from,
+                    'end' => $a->valid_until,
+                    'backgroundColor' => $color,
+                    'borderColor' => $color,
+                    'extendedProps' => [
+                        'type' => 'Announcement',
+                        'content' => $a->content,
+                        'status' => $status,
+                        'link' => $a->link, 
+                        'files' => $a->files 
+                    ]
+                ];
+            });
+
+            return response()->json($events, 200);
+        } catch (\Exception $e) {
+            Log::error('CalendarController getAdminEvents Error: ' . $e->getMessage());
+            return response()->json(['message' => 'Failed to load calendar events.'], 500);
+        }
     }
 
     // Indicator Logic
     public function checkActiveIndicator(Request $request)
     {
-        $now = now();
-        
-        $hasActive = Announcement::where('creator_id', $request->user()->id)
-            ->where('publish_from', '<=', $now)
-            ->where('valid_until', '>=', $now)
-            ->exists();
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
 
-        return response()->json(['has_active_events' => $hasActive], 200);
+        try {
+            $now = now();
+            
+            $hasActive = Announcement::where('creator_id', $request->user()->id)
+                ->where('publish_from', '<=', $now)
+                ->where('valid_until', '>=', $now)
+                ->exists();
+
+            return response()->json(['has_active_events' => $hasActive], 200);
+        } catch (\Exception $e) {
+            Log::error('CalendarController checkActiveIndicator Error: ' . $e->getMessage());
+            return response()->json(['message' => 'Failed to check indicators.'], 500);
+        }
     }
 }
