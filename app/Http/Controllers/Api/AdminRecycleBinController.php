@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use App\Models\User;
 use App\Models\Classroom;
 use App\Models\Classwork;
@@ -16,11 +17,24 @@ use App\Models\Subject;
 use App\Models\AdvisoryClass;
 use App\Models\ActivityLog;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Pagination\LengthAwarePaginator;
 
 class AdminRecycleBinController extends Controller
 {
-    public function index()
+    // Access Control
+    private function checkAdmin(Request $request)
     {
+        return $request->user() && $request->user()->role === 'admin';
+    }
+
+    // View
+    public function index(Request $request)
+    {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
         try {
             $trashedItems = collect();
 
@@ -82,13 +96,52 @@ class AdminRecycleBinController extends Controller
                 $trashedItems->push($this->formatItem($item->id, $item->section . ' (' . $item->school_year . ')', 'Advisory Classes', $owner, $item->deleted_at));
             });
 
-            // Sort: Pinakabagong nabura ang nasa itaas
-            $sortedItems = $trashedItems->sortByDesc('deleted_at')->values()->all();
+            // SORTING
+            $sortedItems = $trashedItems->sortByDesc('deleted_at')->values();
 
-            return response()->json($sortedItems, 200);
+            // SERVER-SIDE SEARCHING
+            if ($request->filled('search')) {
+                $search = strtolower($request->search);
+                $sortedItems = $sortedItems->filter(function ($item) use ($search) {
+                    return Str::contains(strtolower($item['title']), $search) ||
+                           Str::contains(strtolower($item['owner']), $search) ||
+                           Str::contains(strtolower($item['id']), $search);
+                })->values();
+            }
+
+            // SERVER-SIDE CATEGORY FILTERING
+            if ($request->filled('category') && $request->category !== 'all') {
+                $sortedItems = $sortedItems->where('type', $request->category)->values();
+            }
+
+            // PAGINATION LOGIC
+            $page = $request->input('page', 1);
+            $perPage = $request->input('entries', 10);
+            $total = $sortedItems->count();
+
+            $paginated = new LengthAwarePaginator(
+                $sortedItems->forPage($page, $perPage)->values(),
+                $total,
+                $perPage,
+                $page
+            );
+
+            // Static Categories para sa Dropdown sa Frontend
+            $categories = [
+                'Users', 'Classrooms', 'Classworks', 'Forms', 'Files', 
+                'Announcements', 'E-Libraries', 'Strands', 'Subjects', 'Advisory Classes'
+            ];
+
+            return response()->json([
+                'data' => $paginated->items(),
+                'total' => $total,
+                'last_page' => $paginated->lastPage(),
+                'categories' => $categories
+            ], 200);
 
         } catch (\Throwable $e) {
-            return response()->json(['message' => 'Failed to load recycle bin data.', 'error' => $e->getMessage()], 500);
+            Log::error('AdminRecycleBinController index Error: ' . $e->getMessage());
+            return response()->json(['message' => 'Failed to load recycle bin data.'], 500);
         }
     }
 
@@ -122,59 +175,99 @@ class AdminRecycleBinController extends Controller
         };
     }
 
-    // Isahang logic para sa Restore
+    // Restore
     public function restore(Request $request)
     {
-        $items = $request->input('items', []); 
-        $restoredCount = 0;
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
 
-        foreach ($items as $item) {
-            $model = $this->getModelInstance($item['type']);
-            if ($model) {
-                $record = $model->withTrashed()->find($item['id']);
-                if ($record) {
-                    $record->restore();
-                    $restoredCount++;
+        try {
+            // ARRAY LIMIT & VALIDATION
+            $request->validate([
+                'items' => 'required|array|max:100',
+                'items.*.id' => 'required',
+                'items.*.type' => 'required|string'
+            ]);
+
+            DB::beginTransaction();
+
+            $items = $request->input('items', []); 
+            $restoredCount = 0;
+
+            foreach ($items as $item) {
+                $model = $this->getModelInstance($item['type']);
+                if ($model) {
+                    $record = $model->withTrashed()->find($item['id']);
+                    if ($record) {
+                        $record->restore();
+                        $restoredCount++;
+                    }
                 }
             }
-        }
 
-        if ($restoredCount > 0) {
-            ActivityLog::create([
-                'user_id' => $request->user()->id,
-                'action' => 'Restored Items',
-                'description' => "Restored {$restoredCount} item(s) from the recycle bin back to their original locations."
-            ]);
-        }
+            if ($restoredCount > 0) {
+                ActivityLog::create([
+                    'user_id' => $request->user()->id,
+                    'action' => 'Restored Items',
+                    'description' => "Restored {$restoredCount} item(s) from the recycle bin back to their original locations."
+                ]);
+            }
 
-        return response()->json(['message' => 'Items successfully restored to their original locations.']);
+            DB::commit();
+            return response()->json(['message' => 'Items successfully restored to their original locations.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('AdminRecycleBinController restore Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while restoring items.'], 500);
+        }
     }
 
-    // Isahang logic para sa Permanent Delete
+    // Permanent Delete
     public function forceDelete(Request $request)
     {
-        $items = $request->input('items', []);
-        $deletedCount = 0;
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
 
-        foreach ($items as $item) {
-            $model = $this->getModelInstance($item['type']);
-            if ($model) {
-                $record = $model->withTrashed()->find($item['id']);
-                if ($record) {
-                    $record->forceDelete(); // Binubura na talaga sa database
-                    $deletedCount++;
+        try {
+            // ARRAY LIMIT & VALIDATION
+            $request->validate([
+                'items' => 'required|array|max:100',
+                'items.*.id' => 'required',
+                'items.*.type' => 'required|string'
+            ]);
+
+            DB::beginTransaction();
+
+            $items = $request->input('items', []);
+            $deletedCount = 0;
+
+            foreach ($items as $item) {
+                $model = $this->getModelInstance($item['type']);
+                if ($model) {
+                    $record = $model->withTrashed()->find($item['id']);
+                    if ($record) {
+                        $record->forceDelete(); // Binubura na talaga sa database
+                        $deletedCount++;
+                    }
                 }
             }
-        }
 
-        if ($deletedCount > 0) {
-            ActivityLog::create([
-                'user_id' => $request->user()->id,
-                'action' => 'Permanently Deleted Items',
-                'description' => "Permanently deleted {$deletedCount} item(s) from the recycle bin."
-            ]);
-        }
+            if ($deletedCount > 0) {
+                ActivityLog::create([
+                    'user_id' => $request->user()->id,
+                    'action' => 'Permanently Deleted Items',
+                    'description' => "Permanently deleted {$deletedCount} item(s) from the recycle bin."
+                ]);
+            }
 
-        return response()->json(['message' => 'Items permanently deleted from the database.']);
+            DB::commit();
+            return response()->json(['message' => 'Items permanently deleted from the database.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('AdminRecycleBinController forceDelete Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while permanently deleting items.'], 500);
+        }
     }
 }
