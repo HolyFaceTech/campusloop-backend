@@ -74,10 +74,6 @@ class CalendarController extends Controller
     // Indicator Logic
     public function checkActiveIndicator(Request $request)
     {
-        if (!$this->checkAdmin($request)) {
-            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
-        }
-
         try {
             $now = now();
             
