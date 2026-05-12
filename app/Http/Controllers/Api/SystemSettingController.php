@@ -30,15 +30,10 @@ class SystemSettingController extends Controller
     // View School Setting
     public function index(Request $request)
     {
-        if (!$this->checkAdmin($request)) {
-            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
-        }
-
         try {
             $activeSetting = SystemSetting::where('is_active', true)->first();
             return response()->json($activeSetting, 200);
         } catch (\Exception $e) {
-            // 🚨 FIX 2: INFORMATION LEAKAGE PREVENTION
             Log::error('SystemSettingController index Error: ' . $e->getMessage());
             return response()->json(['message' => 'An unexpected error occurred while fetching settings.'], 500);
         }
