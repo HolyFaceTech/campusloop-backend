@@ -250,6 +250,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Teacher/Student Comment & Reply
     Route::post('/classworks/{id}/comments', [CommentController::class, 'store']);
+    Route::put('/comments/{id}', [CommentController::class, 'update']);
+    Route::delete('/comments/{id}', [CommentController::class, 'destroy']);
 
     // Teacher/Student Activity Log
     Route::get('teacher/activity-logs', [ActivityLogController::class, 'indexUser']);
