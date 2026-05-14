@@ -8,129 +8,192 @@ use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log; 
 
 class ClassroomStudentController extends Controller
 {
-    // View Student Classroom
-    public function index($classroomId)
+    // role access
+    private function checkTeacher(Request $request)
     {
-        $classroom = Classroom::findOrFail($classroomId);
-        // Kukunin ang mga estudyante pati ang pivot status at strand
-        $students = $classroom->students()->with('strand')->get();
+        return $request->user() && $request->user()->role === 'teacher';
+    }
 
-        return response()->json($students, 200);
+    // view students
+    public function index(Request $request, $classroomId)
+    {
+        if (!$this->checkTeacher($request)) {
+            return response()->json(['message' => 'Unauthorized Access. Teachers only.'], 403);
+        }
+
+        try {
+            $classroom = Classroom::where('creator_id', $request->user()->id)->findOrFail($classroomId);
+            $search = $request->input('search');
+            $gender = $request->input('gender', 'all');
+            $status = $request->input('status', 'all');
+            $entries = $request->input('entries', 10);
+            $query = $classroom->students()->with('strand');
+
+            if (!empty($search)) {
+                $query->where(function($q) use ($search) {
+                    $q->where('first_name', 'like', "%{$search}%")
+                      ->orWhere('last_name', 'like', "%{$search}%")
+                      ->orWhere('email', 'like', "%{$search}%")
+                      ->orWhere('lrn', 'like', "%{$search}%");
+                });
+            }
+
+            if ($gender !== 'all') {
+                $query->where('gender', $gender);
+            }
+
+            if ($status !== 'all') {
+                $query->wherePivot('status', $status);
+            }
+
+            $students = $query->orderBy('last_name', 'asc')->paginate($entries);
+
+            return response()->json($students, 200);
+        } catch (\Exception $e) {
+            Log::error('Fetch Classroom Students Error: ' . $e->getMessage());
+            return response()->json(['message' => 'Unauthorized or Classroom not found.'], 403);
+        }
     }
 
     // APPROVE STUDENT REQUEST
     public function approve(Request $request, $classroomId)
     {
-        $request->validate(['student_ids' => 'required|array']);
+        if (!$this->checkTeacher($request)) {
+            return response()->json(['message' => 'Unauthorized Access. Teachers only.'], 403);
+        }
+
+        $request->validate([
+            'student_ids' => 'required|array|max:100',
+            'student_ids.*' => 'exists:users,id'
+        ]);
         
-        // Kukunin natin ang classroom at i-load ang subject para makuha ang pangalan nito
-        $classroom = Classroom::with('subject')->findOrFail($classroomId);
+        try {
+            $classroom = Classroom::with('subject')->where('creator_id', $request->user()->id)->findOrFail($classroomId);
+            DB::beginTransaction();
 
-        foreach ($request->student_ids as $studentId) {
-            $classroom->students()->updateExistingPivot($studentId, ['status' => 'approved']);
-        }
-
-        // NOTIFICATION LOGIC (APPROVED)
-        $teacherName = $request->user()->first_name . ' ' . $request->user()->last_name;
-        $subjectName = $classroom->subject ? $classroom->subject->description : 'the class';
-        $sectionName = $classroom->section;
-
-        $notifications = [];
-        $currentTime = now()->toDateTimeString();
-
-        foreach ($request->student_ids as $studentId) {
-            $notifications[] = [
-                'id' => Str::uuid()->toString(),
-                'user_id' => $studentId,
-                'description' => "Teacher {$teacherName} approved your request to join {$subjectName} ({$sectionName}).",
-                'link' => "/student/classrooms/{$classroomId}", // Diretso sa loob ng class
-                'is_read' => false,
-                'created_at' => $currentTime,
-                'updated_at' => $currentTime,
-            ];
-        }
-
-        if (!empty($notifications)) {
-            foreach (array_chunk($notifications, 500) as $chunk) {
-                DB::table('notifications')->insert($chunk);
+            foreach ($request->student_ids as $studentId) {
+                $classroom->students()->updateExistingPivot($studentId, ['status' => 'approved']);
             }
+
+            // NOTIFICATION LOGIC
+            $teacherName = $request->user()->first_name . ' ' . $request->user()->last_name;
+            $subjectName = $classroom->subject ? $classroom->subject->description : 'the class';
+            $sectionName = $classroom->section;
+
+            $notifications = [];
+            $currentTime = now()->toDateTimeString();
+
+            foreach ($request->student_ids as $studentId) {
+                $notifications[] = [
+                    'id' => Str::uuid()->toString(),
+                    'user_id' => $studentId,
+                    'description' => "Teacher {$teacherName} approved your request to join {$subjectName} ({$sectionName}).",
+                    'link' => "/student/classrooms/{$classroomId}", 
+                    'is_read' => false,
+                    'created_at' => $currentTime,
+                    'updated_at' => $currentTime,
+                ];
+            }
+
+            if (!empty($notifications)) {
+                foreach (array_chunk($notifications, 500) as $chunk) {
+                    DB::table('notifications')->insert($chunk);
+                }
+            }
+
+            $count = count($request->student_ids);
+
+            // ACTIVITY LOG
+            if ($count > 0) {
+                ActivityLog::create([
+                    'user_id' => $request->user()->id,
+                    'action' => 'Approved Classroom Students',
+                    'description' => "Approved {$count} student(s) to join the classroom {$subjectName} ({$sectionName})."
+                ]);
+            }
+
+            DB::commit(); // I-save kung successful lahat
+            return response()->json(['message' => 'Students successfully enrolled.'], 200);
+
+        } catch (\Exception $e) {
+            DB::rollBack(); 
+            Log::error('Approve Student Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while approving students.'], 500);
         }
-
-        $count = count($request->student_ids);
-
-        // ACTIVITY LOG
-        if ($count > 0) {
-            ActivityLog::create([
-                'user_id' => $request->user()->id,
-                'action' => 'Approved Classroom Students',
-                'description' => "Approved {$count} student(s) to join the classroom {$subjectName} ({$sectionName})."
-            ]);
-        }
-
-        return response()->json(['message' => 'Students successfully enrolled.'], 200);
     }
 
     // REMOVE OR DECLINE STUDENT
     public function remove(Request $request, $classroomId)
     {
-        $request->validate(['student_ids' => 'required|array']);
-        $classroom = Classroom::with('subject')->findOrFail($classroomId);
+        if (!$this->checkTeacher($request)) {
+            return response()->json(['message' => 'Unauthorized Access. Teachers only.'], 403);
+        }
 
-        // KUNIN MUNA ANG MGA ESTUDYANTE BAGO I-DETACH (Para ma-check kung ano ang current status)
-        $studentsToNotify = $classroom->students()->whereIn('student_id', $request->student_ids)->get();
+        $request->validate([
+            'student_ids' => 'required|array|max:100',
+            'student_ids.*' => 'exists:users,id'
+        ]);
 
-        $classroom->students()->detach($request->student_ids);
+        try {
+            $classroom = Classroom::with('subject')->where('creator_id', $request->user()->id)->findOrFail($classroomId);
+            DB::beginTransaction();
+            // Kunin muna ang info bago burahin para sa tamang notification message
+            $studentsToNotify = $classroom->students()->whereIn('student_id', $request->student_ids)->get();
+            $classroom->students()->detach($request->student_ids);
+            // NOTIFICATION LOGIC 
+            $teacherName = $request->user()->first_name . ' ' . $request->user()->last_name;
+            $subjectName = $classroom->subject ? $classroom->subject->description : 'the class';
+            $sectionName = $classroom->section;
+            $notifications = [];
+            $currentTime = now()->toDateTimeString();
 
-        // NOTIFICATION LOGIC (DECLINED OR UNENROLLED)
-        $teacherName = $request->user()->first_name . ' ' . $request->user()->last_name;
-        $subjectName = $classroom->subject ? $classroom->subject->description : 'the class';
-        $sectionName = $classroom->section;
+            foreach ($studentsToNotify as $student) {
+                $previousStatus = $student->pivot->status;
 
-        $notifications = [];
-        $currentTime = now()->toDateTimeString();
+                if ($previousStatus === 'approved') {
+                    $description = "Teacher {$teacherName} unenrolled you from {$subjectName} ({$sectionName}).";
+                } else {
+                    $description = "Teacher {$teacherName} declined your request to join {$subjectName} ({$sectionName}).";
+                }
 
-        foreach ($studentsToNotify as $student) {
-            // I-check ang status nila bago natin sila burahin kanina
-            $previousStatus = $student->pivot->status;
-
-            // SMART DESCRIPTION:
-            if ($previousStatus === 'approved') {
-                $description = "Teacher {$teacherName} unenrolled you from {$subjectName} ({$sectionName}).";
-            } else {
-                $description = "Teacher {$teacherName} declined your request to join {$subjectName} ({$sectionName}).";
+                $notifications[] = [
+                    'id' => Str::uuid()->toString(),
+                    'user_id' => $student->id,
+                    'description' => $description,
+                    'link' => "/student/classrooms", 
+                    'is_read' => false,
+                    'created_at' => $currentTime,
+                    'updated_at' => $currentTime,
+                ];
             }
 
-            $notifications[] = [
-                'id' => \Illuminate\Support\Str::uuid()->toString(),
-                'user_id' => $student->id,
-                'description' => $description,
-                'link' => "/student/classrooms", 
-                'is_read' => false,
-                'created_at' => $currentTime,
-                'updated_at' => $currentTime,
-            ];
-        }
-
-        if (!empty($notifications)) {
-            foreach (array_chunk($notifications, 500) as $chunk) {
-                DB::table('notifications')->insert($chunk);
+            if (!empty($notifications)) {
+                foreach (array_chunk($notifications, 500) as $chunk) {
+                    DB::table('notifications')->insert($chunk);
+                }
             }
+
+            $count = count($request->student_ids);
+
+            if ($count > 0) {
+                ActivityLog::create([
+                    'user_id' => $request->user()->id,
+                    'action' => 'Removed/Declined Classroom Students',
+                    'description' => "Removed or declined {$count} student(s) from the classroom {$subjectName} ({$sectionName})."
+                ]);
+            }
+
+            DB::commit();
+            return response()->json(['message' => 'Students successfully removed from class.'], 200);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Remove Student Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while processing removal.'], 500);
         }
-
-        $count = count($request->student_ids);
-
-        // ACTIVITY LOG
-        if ($count > 0) {
-            ActivityLog::create([
-                'user_id' => $request->user()->id,
-                'action' => 'Removed/Declined Classroom Students',
-                'description' => "Removed or declined {$count} student(s) from the classroom {$subjectName} ({$sectionName})."
-            ]);
-        }
-
-        return response()->json(['message' => 'Students successfully removed from class.'], 200);
     }
 }
