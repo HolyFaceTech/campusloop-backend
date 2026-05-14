@@ -14,229 +14,277 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 use App\Mail\NewClassworkPosted;
 
 class ClassworkController extends Controller
 {
-    // View Classwork
-    public function index($classroomId)
+    // role base checker
+    private function checkTeacher(Request $request)
     {
-        $classworks = Classwork::with([
-                'files', 
-                'form',
-                'comments' => function ($query) {
-                    $query->whereNull('parent_id')
-                          ->with(['user', 'replies.user'])
-                          ->orderBy('created_at', 'asc');
-                }
-            ])
-            ->where('classroom_id', $classroomId)
-            ->whereNull('deleted_at')
-            ->orderBy('created_at', 'desc')
-            ->get();
-            
-        return response()->json($classworks, 200);
+        return $request->user() && $request->user()->role === 'teacher';
     }
 
-    // Create Classwork
+    // view classwork
+    public function index(Request $request, $classroomId)
+    {
+        if (!$this->checkTeacher($request)) return response()->json(['message' => 'Unauthorized Access.'], 403);
+
+        try {
+            $classroom = Classroom::where('creator_id', $request->user()->id)->findOrFail($classroomId);
+            $classworks = Classwork::with([
+                    'files', 
+                    'form',
+                    'comments' => function ($query) {
+                        $query->whereNull('parent_id')
+                            ->with(['user', 'replies.user'])
+                            ->orderBy('created_at', 'asc');
+                    }
+                ])
+                ->where('classroom_id', $classroomId)
+                ->whereNull('deleted_at')
+                ->orderBy('created_at', 'desc')
+                ->get();
+                
+            return response()->json($classworks, 200);
+        } catch (\Exception $e) {
+            Log::error('Fetch Classworks Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while fetching classworks.'], 500);
+        }
+    }
+
+    // create classwork
     public function store(Request $request, $classroomId)
     {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'type' => 'required|in:assignment,activity,quiz,exam,material',
-            'instruction' => 'required|string',
-            'points' => 'nullable|integer',
-            'deadline' => 'nullable|date',
-            'link' => 'nullable|string',
-            'form_id' => 'nullable|uuid|exists:forms,id',
-            'files.*' => 'file|max:51200'
-        ]);
+        if (!$this->checkTeacher($request)) return response()->json(['message' => 'Unauthorized Access.'], 403);
 
-        $classwork = Classwork::create(array_merge($validated, ['classroom_id' => $classroomId]));
+        try {
+            $classroom = Classroom::with('subject')->where('creator_id', $request->user()->id)->findOrFail($classroomId);
+            $validated = $request->validate([
+                'title' => 'required|string|max:255',
+                'type' => 'required|in:assignment,activity,quiz,exam,material',
+                'instruction' => 'required|string',
+                'points' => 'nullable|integer',
+                'deadline' => 'nullable|date',
+                'link' => 'nullable|url|starts_with:http://,https://',
+                'form_id' => 'nullable|uuid|exists:forms,id',
+                'files' => 'nullable|array|max:10',
+                'files.*' => 'file|mimes:pdf,doc,docx,xls,xlsx,csv,ppt,pptx,png,jpg,jpeg,gif,mp4,avi,mov|max:51200'
+            ]);
 
-        if ($request->hasFile('files')) {
-            $user = Auth::user();
-            $folderName = str_replace(' ', '_', strtolower($user->first_name . '_' . $user->last_name . '_' . $user->id));
-            $destinationPath = "users_files/{$folderName}/classworks";
+            $classwork = Classwork::create(array_merge($validated, ['classroom_id' => $classroomId]));
 
-            foreach ($request->file('files') as $uploadedFile) {
-                $filename = $uploadedFile->getClientOriginalName();
-                $path = $uploadedFile->storeAs($destinationPath, time() . '_' . $filename, 'public');
+            if ($request->hasFile('files')) {
+                $user = Auth::user();
+                $folderName = str_replace(' ', '_', strtolower($user->first_name . '_' . $user->last_name . '_' . $user->id));
+                $destinationPath = "users_files/{$folderName}/classworks";
 
-                File::create([
-                    'id' => (string) Str::uuid(),
-                    'owner_id' => $user->id,
-                    'name' => $filename,
-                    'path' => '/storage/' . $path,
-                    'file_extension' => $uploadedFile->getClientOriginalExtension(),
-                    'file_size' => $uploadedFile->getSize(),
-                    'attachable_type' => Classwork::class,
-                    'attachable_id' => $classwork->id
-                ]);
+                foreach ($request->file('files') as $uploadedFile) {
+                    $originalName = $uploadedFile->getClientOriginalName();
+                    // System-generated hash para iwas File Name Exploits (Directory Traversal)
+                    $path = $uploadedFile->store($destinationPath, 'public');
+
+                    File::create([
+                        'id' => (string) Str::uuid(),
+                        'owner_id' => $user->id,
+                        'name' => $originalName,
+                        'path' => '/storage/' . $path,
+                        'file_extension' => $uploadedFile->getClientOriginalExtension(),
+                        'file_size' => $uploadedFile->getSize(),
+                        'attachable_type' => Classwork::class,
+                        'attachable_id' => $classwork->id
+                    ]);
+                }
             }
-        }
 
-        // NOTIFICATION & EMAIL LOGIC
-        $teacher = $request->user();
-        $teacherName = $teacher->first_name . ' ' . $teacher->last_name;
-        $classworkType = ucfirst($classwork->type);
-        
-        // Kunin ang classroom at subject
-        $classroom = Classroom::with('subject')->findOrFail($classroomId);
-        $subjectName = $classroom->subject ? $classroom->subject->description : 'the class';
-        
-        // Kunin ang lahat ng APPROVED students sa classroom
-        $approvedStudents = $classroom->students()->wherePivot('status', 'approved')->get();
+            $teacher = $request->user();
+            $teacherName = $teacher->first_name . ' ' . $teacher->last_name;
+            $classworkType = ucfirst($classwork->type);
+            $subjectName = $classroom->subject ? $classroom->subject->description : 'the class';
+            $approvedStudents = $classroom->students()->wherePivot('status', 'approved')->get();
 
-        $notifications = [];
-        $currentTime = now()->toDateTimeString();
-        
-        // Setup ng link na gagamitin sa notification at sa email
-        $frontendBaseUrl = env('FRONTEND_URL', 'http://localhost:5173'); // Siguraduhin nasa .env mo ito!
-        $linkPath = "/student/classrooms/{$classroomId}/stream";
-        $fullLink = $frontendBaseUrl . $linkPath;
+            $notifications = [];
+            $currentTime = now()->toDateTimeString();
+            $frontendBaseUrl = env('FRONTEND_URL', 'http://localhost:5173'); 
+            $linkPath = "/student/classrooms/{$classroomId}/stream";
+            $fullLink = $frontendBaseUrl . $linkPath;
 
-        foreach ($approvedStudents as $student) {
-            // Ihanda ang IN-APP Bell Notification
-            $notifications[] = [
-                'id' => Str::uuid()->toString(),
-                'user_id' => $student->id,
-                'description' => "Teacher {$teacherName} posted a new {$classworkType}: '{$classwork->title}' in {$subjectName}.",
-                'link' => $linkPath,
-                'is_read' => false,
-                'created_at' => $currentTime,
-                'updated_at' => $currentTime,
-            ];
+            foreach ($approvedStudents as $student) {
+                $notifications[] = [
+                    'id' => Str::uuid()->toString(),
+                    'user_id' => $student->id,
+                    'description' => "Teacher {$teacherName} posted a new {$classworkType}: '{$classwork->title}' in {$subjectName}.",
+                    'link' => $linkPath,
+                    'is_read' => false,
+                    'created_at' => $currentTime,
+                    'updated_at' => $currentTime,
+                ];
 
-            // I-queue ang pag-send ng EMAIL sa background
-            if (!empty($student->email)) {
-                Mail::to($student->email)->send(new NewClassworkPosted(
-                    $student->first_name,
-                    $teacherName,
-                    $subjectName,
-                    $classwork->type,
-                    $classwork->title,
-                    $classwork->deadline,
-                    $fullLink
-                ));
+                // Asynchronous (Background Task) Queue Email
+                if (!empty($student->email)) {
+                    Mail::to($student->email)->queue(new NewClassworkPosted(
+                        $student->first_name,
+                        $teacherName,
+                        $subjectName,
+                        $classwork->type,
+                        $classwork->title,
+                        $classwork->deadline,
+                        $fullLink
+                    ));
+                }
             }
-        }
 
-        // Bulk Insert sa Database Notifications
-        if (!empty($notifications)) {
-            foreach (array_chunk($notifications, 500) as $chunk) {
-                DB::table('notifications')->insert($chunk);
+            if (!empty($notifications)) {
+                foreach (array_chunk($notifications, 500) as $chunk) {
+                    DB::table('notifications')->insert($chunk);
+                }
             }
+
+            ActivityLog::create([
+                'user_id' => $teacher->id,
+                'action' => 'Created Classwork',
+                'description' => "Posted a new {$classworkType}: '{$classwork->title}' in {$subjectName}."
+            ]);
+
+            return response()->json(['message' => 'Classwork posted successfully!', 'classwork' => $classwork->load(['files', 'form'])], 201);
+        } catch (\Exception $e) {
+            Log::error('Create Classwork Error: ' . $e->getMessage());
+            return response()->json(['message' => 'Failed to create classwork.'], 500);
         }
-
-        // ACTIVITY LOG
-        ActivityLog::create([
-            'user_id' => $teacher->id,
-            'action' => 'Created Classwork',
-            'description' => "Posted a new {$classworkType}: '{$classwork->title}' in {$subjectName}."
-        ]);
-
-        return response()->json(['message' => 'Classwork posted successfully!', 'classwork' => $classwork->load(['files', 'form'])], 201);
     }
 
-    // Update Classwork
+    // update classwork
     public function update(Request $request, $id)
     {
-        $classwork = Classwork::findOrFail($id);
+        if (!$this->checkTeacher($request)) return response()->json(['message' => 'Unauthorized Access.'], 403);
 
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'type' => 'required|in:assignment,activity,quiz,exam,material',
-            'instruction' => 'required|string',
-            'points' => 'nullable|integer',
-            'deadline' => 'nullable|date',
-            'link' => 'nullable|string',
-            'form_id' => 'nullable|uuid|exists:forms,id',
-            'files.*' => 'file|max:51200'
-        ]);
+        try {
+            $classwork = Classwork::whereHas('classroom', function($query) use ($request) {
+                $query->where('creator_id', $request->user()->id);
+            })->findOrFail($id);
 
-        $classwork->update($validated);
+            $validated = $request->validate([
+                'title' => 'required|string|max:255',
+                'type' => 'required|in:assignment,activity,quiz,exam,material',
+                'instruction' => 'required|string',
+                'points' => 'nullable|integer',
+                'deadline' => 'nullable|date',
+                'link' => 'nullable|url|starts_with:http://,https://',
+                'form_id' => 'nullable|uuid|exists:forms,id',
+                'files' => 'nullable|array|max:10',
+                'files.*' => 'file|mimes:pdf,doc,docx,xls,xlsx,csv,ppt,pptx,png,jpg,jpeg,gif,mp4,avi,mov|max:51200'
+            ]);
 
-        if ($request->has('deleted_file_ids')) {
-            $filesToDelete = File::whereIn('id', $request->deleted_file_ids)->get();
-            foreach ($filesToDelete as $f) {
-                $relativePath = str_replace('/storage/', '', $f->path);
-                Storage::disk('public')->delete($relativePath);
-                $f->delete();
+            $dataToUpdate = $validated;
+            $dataToUpdate['link'] = $request->input('link', null);
+            $dataToUpdate['form_id'] = $request->input('form_id', null);
+
+            $classwork->update($dataToUpdate);
+
+            if ($request->has('deleted_file_ids')) {
+                $filesToDelete = File::whereIn('id', $request->deleted_file_ids)->get();
+                foreach ($filesToDelete as $f) {
+                    $relativePath = str_replace('/storage/', '', $f->path);
+                    Storage::disk('public')->delete($relativePath);
+                    $f->delete();
+                }
             }
-        }
 
-        if ($request->hasFile('files')) {
-            $user = Auth::user();
-            $folderName = str_replace(' ', '_', strtolower($user->first_name . '_' . $user->last_name . '_' . $user->id));
-            $destinationPath = "users_files/{$folderName}/classworks";
+            if ($request->hasFile('files')) {
+                $user = Auth::user();
+                $folderName = str_replace(' ', '_', strtolower($user->first_name . '_' . $user->last_name . '_' . $user->id));
+                $destinationPath = "users_files/{$folderName}/classworks";
 
-            foreach ($request->file('files') as $uploadedFile) {
-                $filename = $uploadedFile->getClientOriginalName();
-                $path = $uploadedFile->storeAs($destinationPath, time() . '_' . $filename, 'public');
+                foreach ($request->file('files') as $uploadedFile) {
+                    $originalName = $uploadedFile->getClientOriginalName();
+                    // System-generated hash para safe filename
+                    $path = $uploadedFile->store($destinationPath, 'public');
 
-                File::create([
-                    'id' => (string) Str::uuid(),
-                    'owner_id' => $user->id,
-                    'name' => $filename,
-                    'path' => '/storage/' . $path,
-                    'file_extension' => $uploadedFile->getClientOriginalExtension(),
-                    'file_size' => $uploadedFile->getSize(),
-                    'attachable_type' => Classwork::class,
-                    'attachable_id' => $classwork->id
-                ]);
+                    File::create([
+                        'id' => (string) Str::uuid(),
+                        'owner_id' => $user->id,
+                        'name' => $originalName,
+                        'path' => '/storage/' . $path,
+                        'file_extension' => $uploadedFile->getClientOriginalExtension(),
+                        'file_size' => $uploadedFile->getSize(),
+                        'attachable_type' => Classwork::class,
+                        'attachable_id' => $classwork->id
+                    ]);
+                }
             }
+
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Updated Classwork',
+                'description' => "Updated the details of " . ucfirst($classwork->type) . ": '{$classwork->title}'."
+            ]);
+
+            return response()->json(['message' => 'Classwork updated successfully!'], 200);
+        } catch (\Exception $e) {
+            Log::error('Update Classwork Error: ' . $e->getMessage());
+            return response()->json(['message' => 'Failed to update classwork.'], 500);
         }
-
-        $classworkType = ucfirst($classwork->type);
-
-        // ACTIVITY LOG
-        ActivityLog::create([
-            'user_id' => $request->user()->id,
-            'action' => 'Updated Classwork',
-            'description' => "Updated the details of {$classworkType}: '{$classwork->title}'."
-        ]);
-
-        return response()->json(['message' => 'Classwork updated successfully!'], 200);
     }
 
-    // Delete Classwork
+    // delete classwork
     public function destroy(Request $request, $id)
     {
-        $classwork = Classwork::with('classroom.subject')->findOrFail($id);
+        if (!$this->checkTeacher($request)) return response()->json(['message' => 'Unauthorized Access.'], 403);
 
-        $title = $classwork->title ?? 'Activity';
-        $type = ucfirst($classwork->type);
-        $subjectName = $classwork->classroom && $classwork->classroom->subject ? $classwork->classroom->subject->description : 'the class';
+        try {
+            $classwork = Classwork::with('classroom.subject')->whereHas('classroom', function($query) use ($request) {
+                $query->where('creator_id', $request->user()->id);
+            })->findOrFail($id);
 
-        $classwork->delete(); 
+            $title = $classwork->title ?? 'Activity';
+            $type = ucfirst($classwork->type);
+            $subjectName = $classwork->classroom && $classwork->classroom->subject ? $classwork->classroom->subject->description : 'the class';
 
-        // ACTIVITY LOG TRIGGER: Delete Classwork
-        ActivityLog::create([
-            'user_id' => $request->user()->id,
-            'action' => 'Deleted Classwork',
-            'description' => "Moved the {$type} '{$title}' from {$subjectName} to the recycle bin."
-        ]);
+            $classwork->delete(); 
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Deleted Classwork',
+                'description' => "Moved the {$type} '{$title}' from {$subjectName} to the recycle bin."
+            ]);
 
-        return response()->json(['message' => 'Classwork moved to recycle bin.'], 200);
+            return response()->json(['message' => 'Classwork moved to recycle bin.'], 200);
+        } catch (\Exception $e) {
+            Log::error('Delete Classwork Error: ' . $e->getMessage());
+            return response()->json(['message' => 'Failed to delete classwork.'], 500);
+        }
     }
 
-    // View Student Submission
-    public function getSubmissions($classworkId)
+    // view respondents
+    public function getSubmissions(Request $request, $classworkId)
     {
+        if (!$this->checkTeacher($request)) return response()->json(['message' => 'Unauthorized Access.'], 403);
+
         try {
-            $classwork = Classwork::findOrFail($classworkId);
-            $classroomId = $classwork->classroom_id;
+            $classwork = Classwork::whereHas('classroom', function($query) use ($request) {
+                $query->where('creator_id', $request->user()->id);
+            })->findOrFail($classworkId);
 
-            $students = DB::table('classroom_student')
+            $search = $request->input('search');
+            $entries = $request->input('entries', 10);
+
+            $query = DB::table('classroom_student')
                 ->join('users', 'classroom_student.student_id', '=', 'users.id')
-                ->where('classroom_student.classroom_id', $classroomId)
+                ->where('classroom_student.classroom_id', $classwork->classroom_id)
                 ->where('classroom_student.status', 'approved')
-                ->select('users.id', 'users.first_name', 'users.last_name', 'users.lrn', 'users.avatar')
-                ->orderBy('users.last_name', 'asc')
-                ->get();
+                ->select('users.id', 'users.first_name', 'users.last_name', 'users.lrn', 'users.avatar');
 
-            foreach ($students as $student) {
+            if (!empty($search)) {
+                $query->where(function($q) use ($search) {
+                    $q->where('users.first_name', 'like', "%{$search}%")
+                      ->orWhere('users.last_name', 'like', "%{$search}%")
+                      ->orWhere('users.lrn', 'like', "%{$search}%");
+                });
+            }
+
+            $students = $query->orderBy('users.last_name', 'asc')->paginate($entries);
+
+            // Fetch submissions per student sa current page
+            foreach ($students->items() as $student) {
                 $submission = DB::table('classwork_submissions')
                     ->where('classwork_id', $classworkId)
                     ->where('student_id', $student->id)
@@ -253,16 +301,26 @@ class ClassworkController extends Controller
 
             return response()->json($students, 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to fetch submissions: ' . $e->getMessage()], 500);
+            Log::error('Get Submissions Error: ' . $e->getMessage());
+            return response()->json(['message' => 'Failed to fetch submissions.'], 500);
         }
     }
 
-    // Put Grade to Student Submission
+    // grade submission
     public function gradeSubmission(Request $request, $classworkId, $studentId)
     {
+        if (!$this->checkTeacher($request)) return response()->json(['message' => 'Unauthorized Access.'], 403);
+
         try {
+            $classwork = Classwork::whereHas('classroom', function($query) use ($request) {
+                $query->where('creator_id', $request->user()->id);
+            })->findOrFail($classworkId);
+
+            $maxPoints = $classwork->points ? $classwork->points : 100;
+
+            // Strict checking sa backend kung ilan talaga max points
             $request->validate([
-                'grade' => 'required|numeric|min:0'
+                'grade' => 'required|numeric|min:0|max:' . $maxPoints
             ]);
 
             $submission = DB::table('classwork_submissions')
@@ -282,59 +340,56 @@ class ClassworkController extends Controller
                     'updated_at' => now()
                 ]);
 
-            // KUNIN ANG DETAILS NG STUDENT PARA SA LOG
             $student = DB::table('users')->where('id', $studentId)->first();
             $studentName = $student ? $student->first_name . ' ' . $student->last_name : 'a student';
+            
+            $classroom = DB::table('classrooms')->where('id', $classwork->classroom_id)->first();
+            $subject = $classroom ? DB::table('subjects')->where('id', $classroom->subject_id)->first() : null;
 
-            // NOTIFICATION LOGIC FOR STUDENT
-            // Kunin ang details ng classwork para malaman kung anong type (e.g., assignment, quiz) at perfect score
-            $classwork = DB::table('classworks')->where('id', $classworkId)->first();
+            $teacherName = $request->user()->first_name . ' ' . $request->user()->last_name;
+            $subjectName = $subject ? $subject->description : 'the class';
+            $classworkType = ucfirst($classwork->type); 
+            $classworkTitle = $classwork->title ?? $classwork->name ?? 'Activity';
+            $sectionName = $classroom ? "({$classroom->section})" : "";
+            
+            $scoreString = $classwork->points ? "{$request->grade}/{$classwork->points}" : "{$request->grade}";
 
-            if ($classwork) {
-                // Kunin ang classroom at subject details para sa smart description
-                $classroom = DB::table('classrooms')->where('id', $classwork->classroom_id)->first();
-                $subject = $classroom ? DB::table('subjects')->where('id', $classroom->subject_id)->first() : null;
+            DB::table('notifications')->insert([
+                'id' => Str::uuid()->toString(),
+                'user_id' => $studentId,
+                'description' => "Teacher {$teacherName} graded your {$classworkType}: '{$classworkTitle}' in {$subjectName} {$sectionName}. Score: {$scoreString}",
+                'link' => "/student/classrooms/" . ($classroom ? $classroom->id : ''),
+                'is_read' => false,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
 
-                $teacherName = $request->user()->first_name . ' ' . $request->user()->last_name;
-                $subjectName = $subject ? $subject->description : 'the class';
-                $classworkType = ucfirst($classwork->type); // Gagawing Capital ang unang letter (e.g., "Assignment")
-                $classworkTitle = $classwork->title ?? $classwork->name ?? 'Activity';
-                $sectionName = $classroom ? "({$classroom->section})" : "";
-                
-                // Format score (Example: "85/100" kung may perfect points, or "85" lang kung wala)
-                $scoreString = $classwork->points ? "{$request->grade}/{$classwork->points}" : "{$request->grade}";
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Graded Submission',
+                'description' => "Graded {$studentName}'s submission for the {$classworkType}: '{$classworkTitle}'."
+            ]);
 
-                // I-insert ang notification
-                DB::table('notifications')->insert([
-                    'id' => Str::uuid()->toString(),
-                    'user_id' => $studentId,
-                    'description' => "Teacher {$teacherName} graded your {$classworkType}: '{$classworkTitle}' in {$subjectName} {$sectionName}. Score: {$scoreString}",
-                    'link' => "/student/classrooms/" . ($classroom ? $classroom->id : ''), // Ididirekta sa loob ng classroom nila
-                    'is_read' => false,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-
-                // ACTIVITY LOG
-                ActivityLog::create([
-                    'user_id' => $request->user()->id,
-                    'action' => 'Graded Submission',
-                    'description' => "Graded {$studentName}'s submission for the {$classworkType}: '{$classworkTitle}'."
-                ]);
-            }
             return response()->json(['message' => 'Grade saved successfully!'], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to save grade: ' . $e->getMessage()], 500);
+            Log::error('Grade Submission Error: ' . $e->getMessage());
+            return response()->json(['message' => 'Failed to save grade. Exceeds max points limit.'], 500);
         }
     }
 
     // Unsubmit Student Submission
     public function returnSubmission(Request $request, $classworkId, $studentId)
     {
+        if (!$this->checkTeacher($request)) return response()->json(['message' => 'Unauthorized Access.'], 403);
+
         try {
             $request->validate([
                 'feedback' => 'required|string'
             ]);
+
+            $classwork = Classwork::whereHas('classroom', function($query) use ($request) {
+                $query->where('creator_id', $request->user()->id);
+            })->findOrFail($classworkId);
 
             $submission = DB::table('classwork_submissions')
                 ->where('classwork_id', $classworkId)
@@ -345,8 +400,6 @@ class ClassworkController extends Controller
                 return response()->json(['message' => 'No submission found.'], 404);
             }
 
-            // SET TO 'pending' (instead of returned) 
-            // PERO SINAVE ANG FEEDBACK PARA MALAMAN NG FRONTEND NA RETURNED ITO.
             DB::table('classwork_submissions')
                 ->where('id', $submission->id)
                 ->update([
@@ -356,48 +409,39 @@ class ClassworkController extends Controller
                     'updated_at' => now()
                 ]);
 
-            // KUNIN ANG DETAILS NG STUDENT PARA SA LOG
             $student = DB::table('users')->where('id', $studentId)->first();
             $studentName = $student ? $student->first_name . ' ' . $student->last_name : 'a student';
+            $classroom = DB::table('classrooms')->where('id', $classwork->classroom_id)->first();
+            $subject = $classroom ? DB::table('subjects')->where('id', $classroom->subject_id)->first() : null;
 
-            // NOTIFICATION LOGIC FOR STUDENT (RETURNED)
-            $classwork = DB::table('classworks')->where('id', $classworkId)->first();
+            $teacherName = $request->user()->first_name . ' ' . $request->user()->last_name;
+            $subjectName = $subject ? $subject->description : 'the class';
+            $classworkType = ucfirst($classwork->type); 
+            $classworkTitle = $classwork->title ?? $classwork->name ?? 'Activity';
+            $sectionName = $classroom ? "({$classroom->section})" : "";
+            
+            $feedbackSnippet = Str::limit($request->feedback, 30);
 
-            if ($classwork) {
-                $classroom = DB::table('classrooms')->where('id', $classwork->classroom_id)->first();
-                $subject = $classroom ? DB::table('subjects')->where('id', $classroom->subject_id)->first() : null;
+            DB::table('notifications')->insert([
+                'id' => Str::uuid()->toString(),
+                'user_id' => $studentId,
+                'description' => "Teacher {$teacherName} returned your {$classworkType}: '{$classworkTitle}' in {$subjectName} {$sectionName}. Feedback: \"{$feedbackSnippet}\"",
+                'link' => "/student/classrooms/" . ($classroom ? $classroom->id : ''),
+                'is_read' => false,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
 
-                $teacherName = $request->user()->first_name . ' ' . $request->user()->last_name;
-                $subjectName = $subject ? $subject->description : 'the class';
-                $classworkType = ucfirst($classwork->type); 
-                $classworkTitle = $classwork->title ?? $classwork->name ?? 'Activity';
-                $sectionName = $classroom ? "({$classroom->section})" : "";
-                
-                // Limitahan natin ang feedback sa 30 characters para maganda sa bell notification
-                $feedbackSnippet = Str::limit($request->feedback, 30);
-
-                // I-insert ang notification
-                DB::table('notifications')->insert([
-                    'id' => Str::uuid()->toString(),
-                    'user_id' => $studentId,
-                    'description' => "Teacher {$teacherName} returned your {$classworkType}: '{$classworkTitle}' in {$subjectName} {$sectionName}. Feedback: \"{$feedbackSnippet}\"",
-                    'link' => "/student/classrooms/" . ($classroom ? $classroom->id : ''), // Direkta sa classroom
-                    'is_read' => false,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-
-                // ACTIVITY LOG TRIGGER: Return Submission
-                ActivityLog::create([
-                    'user_id' => $request->user()->id,
-                    'action' => 'Returned Submission',
-                    'description' => "Returned {$studentName}'s submission for the {$classworkType}: '{$classworkTitle}' with feedback."
-                ]);
-            }
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Returned Submission',
+                'description' => "Returned {$studentName}'s submission for the {$classworkType}: '{$classworkTitle}' with feedback."
+            ]);
 
             return response()->json(['message' => 'Submission returned to student with feedback.'], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to return submission: ' . $e->getMessage()], 500);
+            Log::error('Return Submission Error: ' . $e->getMessage());
+            return response()->json(['message' => 'Failed to return submission.'], 500);
         }
     }
 }

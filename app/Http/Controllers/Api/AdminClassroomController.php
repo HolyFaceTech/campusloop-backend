@@ -26,7 +26,8 @@ class AdminClassroomController extends Controller
 
         $query = Classroom::with(['creator', 'subject', 'strand'])
             ->withCount(['students as enrolled_count' => function ($query) {
-                $query->where('classroom_student.status', 'approved');
+                $query->where('classroom_student.status', 'approved')
+                      ->whereNull('users.deleted_at');
             }]);
 
         // Server-Side Searching (Cross-table search)
@@ -132,7 +133,8 @@ class AdminClassroomController extends Controller
 
         $classroom = Classroom::with(['creator', 'subject', 'strand'])
             ->withCount(['students as enrolled_count' => function ($query) {
-                $query->where('classroom_student.status', 'approved');
+                $query->where('classroom_student.status', 'approved')
+                      ->whereNull('users.deleted_at');
             }])
             ->findOrFail($id);
 
