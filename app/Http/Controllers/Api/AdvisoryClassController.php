@@ -26,7 +26,7 @@ class AdvisoryClassController extends Controller
 
         try {
             $search = $request->input('search');
-            $entries = $request->input('entries', 10);
+            $entries = $request->input('entries', 12);
 
             $query = AdvisoryClass::where('teacher_id', $request->user()->id);
 
