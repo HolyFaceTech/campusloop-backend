@@ -7,14 +7,25 @@ use App\Models\Form;
 use App\Models\FormQuestion;
 use App\Models\ActivityLog;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Validation\ValidationException;
 
 class FormQuestionController extends Controller
 {
-    // Create Form Questions
+    private function checkTeacher(Request $request)
+    {
+        return $request->user() && $request->user()->role === 'teacher';
+    }
+
+    // CREATE
     public function store(Request $request, $formId)
     {
+        if (!$this->checkTeacher($request)) {
+            return response()->json(['message' => 'Unauthorized Access. Teachers only.'], 403);
+        }
+
         try {
-            // Verify kung sa teacher ang form
             $form = Form::where('creator_id', $request->user()->id)->findOrFail($formId);
 
             $validated = $request->validate([
@@ -22,14 +33,14 @@ class FormQuestionController extends Controller
                 'instruction' => 'nullable|string',
                 'text' => 'required|string',
                 'type' => 'required|in:multiple_choice,short_answer',
-                'choices' => 'nullable|array',
-                'correct_answer' => 'required|string',
+                'choices' => 'nullable|array|max:10',
+                'choices.*' => 'required|max:255', 
+                'correct_answer' => 'required|max:255', 
                 'points' => 'required|integer|min:1',
             ]);
 
             $question = $form->questions()->create($validated);
 
-            // ACTIVITY LOG 
             ActivityLog::create([
                 'user_id' => $request->user()->id,
                 'action' => 'Added Form Question',
@@ -37,34 +48,43 @@ class FormQuestionController extends Controller
             ]);
 
             return response()->json(['message' => 'Question added successfully!', 'question' => $question], 201);
+            
+        } catch (ValidationException $e) {
+            return response()->json(['message' => 'Validation Error', 'errors' => $e->errors()], 422);
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['message' => 'Form not found.'], 404);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Server Error: ' . $e->getMessage()], 500);
+            Log::error('Create Form Question Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred.', 'debug_error' => $e->getMessage()], 500);
         }
     }
 
-    // Update Form Questions
+    // UPDATE
     public function update(Request $request, $id)
     {
+        if (!$this->checkTeacher($request)) {
+            return response()->json(['message' => 'Unauthorized Access. Teachers only.'], 403);
+        }
+
         try {
-            // Verify kung sa teacher ang question via form relationship
-            $question = FormQuestion::whereHas('form', function ($query) use ($request) {
+            $question = FormQuestion::with('form')->whereHas('form', function ($query) use ($request) {
                 $query->where('creator_id', $request->user()->id);
-            })->findOrFail($id);
+            })->where('id', $id)->firstOrFail();
 
             $validated = $request->validate([
                 'section' => 'nullable|string|max:255',
                 'instruction' => 'nullable|string',
                 'text' => 'required|string',
                 'type' => 'required|in:multiple_choice,short_answer',
-                'choices' => 'nullable|array',
-                'correct_answer' => 'required|string',
+                'choices' => 'nullable|array|max:10',
+                'choices.*' => 'required|max:255',
+                'correct_answer' => 'required|max:255',
                 'points' => 'required|integer|min:1',
             ]);
 
             $question->update($validated);
             $formName = $question->form ? $question->form->name : 'Quiz/Exam';
 
-            // ACTIVITY LOG
             ActivityLog::create([
                 'user_id' => $request->user()->id,
                 'action' => 'Updated Form Question',
@@ -72,30 +92,45 @@ class FormQuestionController extends Controller
             ]);
 
             return response()->json(['message' => 'Question updated successfully!'], 200);
+            
+        } catch (ValidationException $e) {
+            return response()->json(['message' => 'Validation Error', 'errors' => $e->errors()], 422);
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['message' => 'Question not found.'], 404);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Server Error: ' . $e->getMessage()], 500);
+            Log::error('Update Form Question Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred.', 'debug_error' => $e->getMessage()], 500);
         }
     }
 
-    // Delete Form Question
+    // DELETE
     public function destroy(Request $request, $id)
     {
-        // Isinama ang 'form' para makuha ang pangalan bago burahin
-        $question = FormQuestion::with('form')->whereHas('form', function ($query) use ($request) {
-            $query->where('creator_id', $request->user()->id);
-        })->findOrFail($id);
+        if (!$this->checkTeacher($request)) {
+            return response()->json(['message' => 'Unauthorized Access. Teachers only.'], 403);
+        }
 
-        $formName = $question->form ? $question->form->name : 'Quiz/Exam';
-        
-        $question->delete();
+        try {
+            $question = FormQuestion::with('form')->whereHas('form', function ($query) use ($request) {
+                $query->where('creator_id', $request->user()->id);
+            })->where('id', $id)->firstOrFail();
 
-        // ACTIVITY LOG
-        ActivityLog::create([
-            'user_id' => $request->user()->id,
-            'action' => 'Deleted Form Question',
-            'description' => "Deleted a question from the form '{$formName}'."
-        ]);
-        
-        return response()->json(['message' => 'Question deleted.'], 200);
+            $formName = $question->form ? $question->form->name : 'Quiz/Exam';
+            $question->delete();
+
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Deleted Form Question',
+                'description' => "Deleted a question from the form '{$formName}'."
+            ]);
+            
+            return response()->json(['message' => 'Question deleted.'], 200);
+            
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['message' => 'Question not found.'], 404);
+        } catch (\Exception $e) {
+            Log::error('Delete Form Question Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred.', 'debug_error' => $e->getMessage()], 500);
+        }
     }
 }
