@@ -209,7 +209,7 @@ class FormController extends Controller
         }
     }
 
-    // Student Submission
+    // Student Submission 
     public function respondents(Request $request, $id)
     {
         if (!$this->checkTeacher($request)) {
@@ -219,19 +219,31 @@ class FormController extends Controller
         try {
             Form::where('creator_id', $request->user()->id)->findOrFail($id);
 
-            $submissions = \App\Models\FormSubmission::with(['student.strand'])
-                ->where('form_id', $id)
-                ->orderBy('submitted_at', 'desc')
-                ->get();
+            $search = $request->input('search');
+            $entries = $request->input('entries', 10);
 
-            // Kunin lahat ng isinagot ng student at i-attach sa submission data
+            $query = \App\Models\FormSubmission::with(['student.strand'])
+                ->where('form_id', $id);
+
+            if (!empty($search)) {
+                $query->whereHas('student', function($q) use ($search) {
+                    $q->where('first_name', 'like', "%{$search}%")
+                      ->orWhere('last_name', 'like', "%{$search}%")
+                      ->orWhere('lrn', 'like', "%{$search}%")
+                      ->orWhere('email', 'like', "%{$search}%");
+                });
+            }
+
+            $submissions = $query->orderBy('submitted_at', 'desc')->paginate($entries);
+
+            // Kunin lahat ng isinagot ng student at i-attach sa paginated submission data
             $submissionIds = $submissions->pluck('id');
             $answers = DB::table('form_submission_answers')
                 ->whereIn('submission_id', $submissionIds)
                 ->get()
                 ->groupBy('submission_id');
 
-            foreach ($submissions as $submission) {
+            foreach ($submissions->items() as $submission) {
                 $submission->answers = isset($answers[$submission->id]) ? $answers[$submission->id] : [];
             }
 
