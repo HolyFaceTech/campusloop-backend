@@ -70,16 +70,23 @@ class ActivityLogController extends Controller
         }
     }
 
-    // Kukunin lang ang activity logs ng NAKA-LOGIN na user (Teacher/Student)
+    // activity logs ng NAKA-LOGIN na user (Teacher/Student)
     public function indexUser(Request $request)
     {
         try {
-            $entries = $request->has('entries') ? (int) $request->entries : 10;
+            $query = ActivityLog::with('user')->where('user_id', $request->user()->id);
 
-            $paginatedLogs = ActivityLog::with('user')
-                ->where('user_id', $request->user()->id)
-                ->orderBy('created_at', 'desc')
-                ->paginate($entries);
+            // SERVER-SIDE SEARCH
+            if ($request->has('search') && !empty($request->search)) {
+                $search = strtolower($request->search);
+                $query->where(function($q) use ($search) {
+                    $q->where('action', 'LIKE', "%{$search}%")
+                      ->orWhere('description', 'LIKE', "%{$search}%");
+                });
+            }
+
+            $entries = $request->input('entries', 10);
+            $paginatedLogs = $query->orderBy('created_at', 'desc')->paginate($entries);
 
             $formattedLogs = collect($paginatedLogs->items())->map(function ($log) {
                 return [
