@@ -12,42 +12,74 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage; 
+use Illuminate\Support\Facades\Log; 
 use Carbon\Carbon;
 
 class StudentClassroomController extends Controller
 {
-    // View Classrooms
-    public function index()
+    // RBAC 
+    private function checkStudent(Request $request)
     {
-        try {
-            $studentId = Auth::id();
+        return $request->user() && $request->user()->role === 'student';
+    }
 
-            $classrooms = Classroom::whereHas('students', function ($query) use ($studentId) {
+    // View Classrooms
+    public function index(Request $request)
+    {
+        if (!$this->checkStudent($request)) {
+            return response()->json(['message' => 'Unauthorized Access. Students only.'], 403);
+        }
+
+        try {
+            $studentId = $request->user()->id;
+            $search = $request->input('search', '');
+            $entries = (int) $request->input('entries', 12); 
+
+            $query = Classroom::whereHas('students', function ($query) use ($studentId) {
                 $query->where('classroom_student.student_id', $studentId)
                       ->where('classroom_student.status', 'approved');
             })
             ->with(['creator', 'subject', 'strand'])
             ->withCount(['students as enrolled_count' => function ($query) {
                 $query->where('classroom_student.status', 'approved');
-            }])
-            ->orderBy('created_at', 'desc')
-            ->get();
+            }]);
+
+            if (!empty($search)) {
+                $query->where(function($q) use ($search) {
+                    $q->whereHas('subject', function($sub) use ($search) {
+                        $sub->where('description', 'LIKE', "%{$search}%")
+                            ->orWhere('code', 'LIKE', "%{$search}%");
+                    })
+                    ->orWhere('section', 'LIKE', "%{$search}%")
+                    ->orWhereHas('creator', function($creator) use ($search) {
+                        $creator->where('first_name', 'LIKE', "%{$search}%")
+                                ->orWhere('last_name', 'LIKE', "%{$search}%");
+                    });
+                });
+            }
+
+            $classrooms = $query->orderBy('created_at', 'desc')->paginate($entries);
 
             return response()->json($classrooms, 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Backend Error: ' . $e->getMessage()], 500);
+            Log::error('Student Fetch Classrooms Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while fetching classrooms.'], 500);
         }
     }
 
     // Join Classroom
     public function joinClassroom(Request $request)
     {
+        if (!$this->checkStudent($request)) {
+            return response()->json(['message' => 'Unauthorized Access. Students only.'], 403);
+        }
+
         try {
             $request->validate([
                 'code' => 'required|string'
             ]);
 
-            $studentId = Auth::id();
+            $studentId = $request->user()->id;
             
             $classroom = Classroom::where('code', $request->code)->first();
 
@@ -67,6 +99,9 @@ class StudentClassroomController extends Controller
                 return response()->json(['message' => 'You are already enrolled in this classroom.'], 400);
             }
 
+            // DB TRANSACTION PARA SA DATA CONSISTENCY
+            DB::beginTransaction();
+
             DB::table('classroom_student')->insert([
                 'id' => Str::uuid(),
                 'classroom_id' => $classroom->id,
@@ -76,40 +111,45 @@ class StudentClassroomController extends Controller
                 'updated_at' => now(),
             ]);
 
-            // SUBJECT DESCRIPTION
             $subject = DB::table('subjects')->where('id', $classroom->subject_id)->first();
             $subjectName = $subject ? $subject->description : 'Class';
 
-            // NOTIFY TEACHER (Request Join)
             DB::table('notifications')->insert([
                 'id' => Str::uuid()->toString(),
                 'user_id' => $classroom->creator_id,
-                'description' => "Student " . Auth::user()->first_name . " " . Auth::user()->last_name . " requested to join {$subjectName} ({$classroom->section}).",
-                'link' => "/teacher/classrooms/{$classroom->id}/people", // Direkta sa People tab
+                'description' => "Student " . $request->user()->first_name . " " . $request->user()->last_name . " requested to join {$subjectName} ({$classroom->section}).",
+                'link' => "/teacher/classrooms/{$classroom->id}/people", 
                 'is_read' => false,
                 'created_at' => now(), 
                 'updated_at' => now(),
             ]);
 
-            // ACTIVITY LOG 
             ActivityLog::create([
                 'user_id' => $studentId,
                 'action' => 'Requested to Join Classroom',
                 'description' => "Sent a request to join the classroom {$subjectName} ({$classroom->section})."
             ]);
 
+            DB::commit(); 
+
             return response()->json(['message' => 'Join request sent! Please wait for your teacher to approve.'], 200);
 
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to join classroom: ' . $e->getMessage()], 500);
+            DB::rollBack(); 
+            Log::error('Student Join Classroom Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while joining.'], 500);
         }
     }
 
     // Enrolled Classrooms
-    public function show($id)
+    public function show(Request $request, $id)
     {
+        if (!$this->checkStudent($request)) {
+            return response()->json(['message' => 'Unauthorized Access.'], 403);
+        }
+
         try {
-            $studentId = Auth::id();
+            $studentId = $request->user()->id;
             
             $classroom = Classroom::with(['creator', 'subject', 'strand'])
                 ->withCount(['students as enrolled_count' => function ($query) {
@@ -123,15 +163,20 @@ class StudentClassroomController extends Controller
 
             return response()->json($classroom, 200);
         } catch (\Exception $e) {
+            Log::error('Student Show Classroom Error: ' . $e->getMessage());
             return response()->json(['message' => 'Classroom not found or unauthorized.'], 404);
         }
     }
 
     // View Classworks
-    public function stream($id)
+    public function stream(Request $request, $id)
     {
+        if (!$this->checkStudent($request)) {
+            return response()->json(['message' => 'Unauthorized Access.'], 403);
+        }
+
         try {
-            $studentId = Auth::id();
+            $studentId = $request->user()->id;
 
             $classworks = Classwork::with([
                 'files', 
@@ -158,7 +203,6 @@ class StudentClassroomController extends Controller
                         ->where('attachable_id', $submission->id)
                         ->get();
 
-                    // CHECK NATIN KUNG MAY GRADE NA O KUNG RETURNED
                     if ($submission->grade !== null) {
                         $cw->student_status = 'GRADED';
                     } elseif ($submission->status === 'pending' && $submission->teacher_feedback !== null) {
@@ -190,19 +234,24 @@ class StudentClassroomController extends Controller
 
             return response()->json($classworks, 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to load stream: ' . $e->getMessage()], 500);
+            Log::error('Student Stream Fetch Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while fetching stream.'], 500);
         }
     }
 
     // Submit Work
     public function submitWork(Request $request, $classworkId)
     {
+        if (!$this->checkStudent($request)) {
+            return response()->json(['message' => 'Unauthorized Access.'], 403);
+        }
+
         try {
             $request->validate([
                 'files.*' => 'file|max:51200' 
             ]);
 
-            $studentId = Auth::id();
+            $studentId = $request->user()->id;
             $classwork = Classwork::findOrFail($classworkId);
 
             $existingSubmission = DB::table('classwork_submissions')
@@ -219,11 +268,13 @@ class StudentClassroomController extends Controller
 
             $isResubmission = false;
 
-            // RESUBMISSION LOGIC (Overwrite luma kung Returned by Teacher)
+            // DB TRANSACTION PARA SA DATA CONSISTENCY
+            DB::beginTransaction();
+
             if ($existingSubmission) {
                 if ($existingSubmission->status === 'pending' && $existingSubmission->teacher_feedback !== null) {
+                    $isResubmission = true;
                     
-                    // Delete old files
                     $files = File::where('attachable_type', 'classwork_submission')
                         ->where('attachable_id', $existingSubmission->id)
                         ->get();
@@ -234,10 +285,9 @@ class StudentClassroomController extends Controller
                         $file->delete();
                     }
 
-                    // Update Submission Data
                     DB::table('classwork_submissions')->where('id', $existingSubmission->id)->update([
                         'status' => $status,
-                        'teacher_feedback' => null, // Clear feedback dahil nag-resubmit na
+                        'teacher_feedback' => null, 
                         'submitted_at' => $now,
                         'updated_at' => $now,
                     ]);
@@ -245,6 +295,7 @@ class StudentClassroomController extends Controller
                     $submissionId = $existingSubmission->id;
 
                 } else {
+                    DB::rollBack();
                     return response()->json(['message' => 'Work already submitted.'], 400);
                 }
             } else {
@@ -260,9 +311,8 @@ class StudentClassroomController extends Controller
                 ]);
             }
 
-            // Save Files
             if ($request->hasFile('files')) {
-                $user = Auth::user();
+                $user = $request->user();
                 $folderName = str_replace(' ', '_', strtolower($user->first_name . '_' . $user->last_name . '_' . $user->id));
                 $destinationPath = "users_files/{$folderName}/submissions";
 
@@ -284,14 +334,10 @@ class StudentClassroomController extends Controller
             }
 
             $classroom = Classroom::find($classwork->classroom_id);
-
-            // SUBJECT DESCRIPTION
             $subject = DB::table('subjects')->where('id', $classroom->subject_id)->first();
             $subjectName = $subject ? $subject->description : 'Class';
+            $studentName = $request->user()->first_name . ' ' . $request->user()->last_name;
             
-            // PANGALAN NG ESTUDYANTE
-            $studentName = Auth::user()->first_name . ' ' . Auth::user()->last_name;
-            // Notify Teacher (Submit Student Work)
             DB::table('notifications')->insert([
                 'id' => Str::uuid()->toString(),
                 'user_id' => $classroom->creator_id,
@@ -302,7 +348,6 @@ class StudentClassroomController extends Controller
                 'updated_at' => now(),
             ]);
 
-            // ACTIVITY LOG TRIGGER: Submit Work
             $logActionText = $isResubmission ? 'Resubmitted Classwork' : 'Submitted Classwork';
             $cwType = ucfirst($classwork->type);
             ActivityLog::create([
@@ -311,17 +356,25 @@ class StudentClassroomController extends Controller
                 'description' => "Submitted work for the {$cwType} '{$classwork->title}' in {$subjectName} ({$classroom->section})."
             ]);
 
+            DB::commit(); 
+
             return response()->json(['message' => 'Work turned in successfully!'], 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to submit work: ' . $e->getMessage()], 500);
+            DB::rollBack(); 
+            Log::error('Student Submit Work Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while submitting work.'], 500);
         }
     }
 
     // Unsubmit Student Work
-    public function unsubmitWork($classworkId)
+    public function unsubmitWork(Request $request, $classworkId)
     {
+        if (!$this->checkStudent($request)) {
+            return response()->json(['message' => 'Unauthorized Access.'], 403);
+        }
+
         try {
-            $studentId = Auth::id();
+            $studentId = $request->user()->id;
             $classwork = Classwork::findOrFail($classworkId);
 
             if ($classwork->form_id) {
@@ -341,7 +394,9 @@ class StudentClassroomController extends Controller
                 return response()->json(['message' => 'No submission found.'], 404);
             }
 
-            // i-unsubmit
+            // DB TRANSACTION PARA SA DATA CONSISTENCY
+            DB::beginTransaction();
+
             $files = File::where('attachable_type', 'classwork_submission')
                 ->where('attachable_id', $submission->id)
                 ->get();
@@ -355,22 +410,18 @@ class StudentClassroomController extends Controller
             DB::table('classwork_submissions')->where('id', $submission->id)->delete();
 
             $classroom = Classroom::find($classwork->classroom_id);
-
-            // KUNIN ANG SUBJECT
             $subject = DB::table('subjects')->where('id', $classroom->subject_id)->first();
             $subjectName = $subject ? $subject->description : 'Class';
 
-            // Notify Teacher (Unsubmit ang Student work)
             DB::table('notifications')->insert([
                 'id' => Str::uuid()->toString(),
                 'user_id' => $classroom->creator_id,
-                'description' => Auth::user()->first_name . " unsubmitted their work for '{$classwork->title}'.",
+                'description' => $request->user()->first_name . " unsubmitted their work for '{$classwork->title}'.",
                 'link' => "/teacher/classrooms/{$classwork->classroom_id}/stream",
                 'is_read' => false,
                 'created_at' => now(), 'updated_at' => now(),
             ]);
 
-            // ACTIVITY LOG TRIGGER: Unsubmit Work
             $cwType = ucfirst($classwork->type);
             ActivityLog::create([
                 'user_id' => $studentId,
@@ -378,18 +429,26 @@ class StudentClassroomController extends Controller
                 'description' => "Unsubmitted work for the {$cwType} '{$classwork->title}' in {$subjectName} ({$classroom->section})."
             ]);
 
+            DB::commit(); 
+
             return response()->json(['message' => 'Work unsubmitted successfully!'], 200);
 
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to unsubmit work: ' . $e->getMessage()], 500);
+            DB::rollBack(); 
+            Log::error('Student Unsubmit Work Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while unsubmitting work.'], 500);
         }
     }
 
     // View and Fetching Grades
-    public function grades($id)
+    public function grades(Request $request, $id)
     {
+        if (!$this->checkStudent($request)) {
+            return response()->json(['message' => 'Unauthorized Access.'], 403);
+        }
+
         try {
-            $studentId = Auth::id();
+            $studentId = $request->user()->id;
             $grades = DB::table('classwork_submissions')
                 ->join('classworks', 'classwork_submissions.classwork_id', '=', 'classworks.id')
                 ->where('classworks.classroom_id', $id)
@@ -402,7 +461,8 @@ class StudentClassroomController extends Controller
 
             return response()->json($grades, 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to load grades: ' . $e->getMessage()], 500);
+            Log::error('Student Fetch Grades Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while fetching grades.'], 500);
         }
     }
 }
