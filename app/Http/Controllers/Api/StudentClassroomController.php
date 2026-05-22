@@ -441,22 +441,101 @@ class StudentClassroomController extends Controller
     public function grades(Request $request, $id)
     {
         if (!$this->checkStudent($request)) {
-            return response()->json(['message' => 'Unauthorized Access. Students only.'], 403);
+            return response()->json(['message' => 'Unauthorized Access.'], 403);
         }
 
         try {
             $studentId = $request->user()->id;
-            $grades = DB::table('classwork_submissions')
+
+            $gradedWorks = DB::table('classwork_submissions')
                 ->join('classworks', 'classwork_submissions.classwork_id', '=', 'classworks.id')
                 ->where('classworks.classroom_id', $id)
                 ->where('classwork_submissions.student_id', $studentId)
                 ->where('classworks.type', '!=', 'material')
                 ->whereNotNull('classwork_submissions.grade')
-                ->select('classworks.title', 'classworks.type', 'classwork_submissions.grade', 'classworks.points')
-                ->orderBy('classworks.created_at', 'desc')
+                ->select('classwork_submissions.grade', 'classworks.points')
                 ->get();
 
-            return response()->json($grades, 200);
+            $totalEarned = 0;
+            $totalPossible = 0;
+            foreach ($gradedWorks as $work) {
+                $totalEarned += (float) $work->grade;
+                $totalPossible += (float) $work->points;
+            }
+            $percentage = $totalPossible > 0 ? round(($totalEarned / $totalPossible) * 100, 1) : 0;
+            $search = $request->input('search', '');
+            $filter = $request->input('filter', 'all');
+            $sort = $request->input('sort', 'newest');
+            $entries = (int) $request->input('entries', 10);
+
+            $query = DB::table('classworks')
+                ->leftJoin('classwork_submissions', function($join) use ($studentId) {
+                    $join->on('classworks.id', '=', 'classwork_submissions.classwork_id')
+                         ->where('classwork_submissions.student_id', '=', $studentId);
+                })
+                ->where('classworks.classroom_id', $id)
+                ->where('classworks.type', '!=', 'material')
+                ->whereNull('classworks.deleted_at')
+                ->select(
+                    'classworks.id',
+                    'classworks.title',
+                    'classworks.type',
+                    'classworks.points',
+                    'classworks.deadline',
+                    'classworks.created_at',
+                    'classwork_submissions.grade',
+                    'classwork_submissions.status as submission_status',
+                    'classwork_submissions.teacher_feedback',
+                    'classwork_submissions.submitted_at'
+                );
+
+            if (!empty($search)) {
+                $query->where('classworks.title', 'LIKE', "%{$search}%");
+            }
+
+            if ($filter !== 'all') {
+                $query->where('classworks.type', $filter);
+            }
+
+            if ($sort === 'newest') {
+                $query->orderByRaw('COALESCE(classwork_submissions.submitted_at, classworks.created_at) DESC');
+            } else {
+                $query->orderByRaw('COALESCE(classwork_submissions.submitted_at, classworks.created_at) ASC');
+            }
+
+            $paginated = $query->paginate($entries);
+
+            $now = Carbon::now();
+            foreach ($paginated as $cw) {
+                if ($cw->submission_status) {
+                    if ($cw->submission_status === 'graded') {
+                        $cw->student_status = 'graded';
+                    } elseif ($cw->submission_status === 'late_submission') {
+                        $cw->student_status = 'late_submission';
+                    } elseif (!is_null($cw->teacher_feedback) && is_null($cw->grade)) {
+                        $cw->student_status = 'returned';
+                    } else {
+                        $cw->student_status = 'turned_in';
+                    }
+                } else {
+                    if ($cw->deadline && $now->greaterThan(Carbon::parse($cw->deadline))) {
+                        $cw->student_status = 'missing';
+                    } else {
+                        $cw->student_status = 'pending';
+                    }
+                }
+
+                $cw->student_submission = (object) [
+                    'submitted_at' => $cw->submitted_at,
+                    'grade' => $cw->grade
+                ];
+            }
+
+            return response()->json([
+                'grades' => $paginated,
+                'percentage' => $percentage
+            ], 200);
+
         } catch (\Exception $e) {
             Log::error('Student Fetch Grades Error: ' . $e->getMessage());
             return response()->json(['message' => 'An unexpected error occurred while fetching grades.'], 500);
