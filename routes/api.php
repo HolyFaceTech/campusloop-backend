@@ -267,6 +267,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Student Form
     Route::get('/student/forms/{id}', [StudentFormController::class, 'show']);
     Route::post('/student/forms/{id}/submit', [StudentFormController::class, 'submit']);
+    Route::post('/student/forms/{id}/save-progress', [StudentFormController::class, 'saveProgress']);
 
     // Student Classroom Grade
     Route::get('/student/classrooms/{id}/grades', [StudentClassroomController::class, 'grades']);
