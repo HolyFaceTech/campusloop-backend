@@ -7,19 +7,36 @@ use Illuminate\Http\Request;
 use App\Models\Announcement;
 use App\Models\Classroom;
 use App\Models\Classwork;
+use Illuminate\Support\Facades\Log; 
+use Carbon\Carbon; 
 
 class TeacherCalendarController extends Controller
 {
+    // RBAC
+    private function checkTeacher(Request $request)
+    {
+        return $request->user() && $request->user()->role === 'teacher';
+    }
+
     // View Events
     public function events(Request $request)
     {
+        // 
+        if (!$this->checkTeacher($request)) {
+            return response()->json(['message' => 'Unauthorized Access. Teachers only.'], 403);
+        }
+
         try {
             $teacherId = $request->user()->id;
+            $startDate = $request->input('start') ? Carbon::parse($request->input('start')) : now()->subMonths(3);
+            $endDate = $request->input('end') ? Carbon::parse($request->input('end')) : now()->addMonths(6);
+
             $events = [];
 
             // GET SYSTEM ANNOUNCEMENTS (Published or Done)
             $announcements = Announcement::with('files')
                 ->where('publish_from', '<=', now())
+                ->whereBetween('publish_from', [$startDate, $endDate]) 
                 ->get()
                 ->map(function ($a) {
                     return [
@@ -44,6 +61,7 @@ class TeacherCalendarController extends Controller
                     $q->where('creator_id', $teacherId);
                 })
                 ->whereNotNull('deadline')
+                ->whereBetween('deadline', [$startDate, $endDate]) 
                 ->get()
                 ->map(function ($cw) {
                     return [
@@ -79,18 +97,15 @@ class TeacherCalendarController extends Controller
             foreach ($classrooms as $room) {
                 $schedules = $room->schedule; 
                 
-                // I-convert sa array kung string ang na-return ng database
                 if (is_string($schedules)) {
                     $schedules = json_decode($schedules, true);
                 }
 
-                // Format: {"days":["Mon","Wed","Fri"], "start_time":"19:30", "end_time":"20:30"}
                 if (is_array($schedules) && isset($schedules['days']) && is_array($schedules['days'])) {
                     
                     $startTime = $schedules['start_time'] ?? null;
                     $endTime = $schedules['end_time'] ?? null;
 
-                    // I-loop ang bawat araw sa loob ng "days" array
                     foreach ($schedules['days'] as $index => $dayName) {
                         $cleanDay = strtolower(trim($dayName)); 
                         
@@ -98,12 +113,11 @@ class TeacherCalendarController extends Controller
                             $event = [
                                 'id' => 'class_' . $room->id . '_' . $index,
                                 'title' => ($room->subject->code ?? 'Class') . ' - ' . $room->section,
-                                'daysOfWeek' => [$dayMap[$cleanDay]], // Target day (0-6)
+                                'daysOfWeek' => [$dayMap[$cleanDay]], 
                                 'backgroundColor' => $room->color_bg ?? '#6f42c1',
                                 
-                                // Para mag-appear sa buong calendar mula nakaraan hanggang future
-                                'startRecur' => now()->subMonths(6)->format('Y-m-d'),
-                                'endRecur' => now()->addMonths(6)->format('Y-m-d'),
+                                'startRecur' => $startDate->format('Y-m-d'), 
+                                'endRecur' => $endDate->format('Y-m-d'),
 
                                 'extendedProps' => [
                                     'type' => 'Classroom',
@@ -113,7 +127,6 @@ class TeacherCalendarController extends Controller
                                 ]
                             ];
 
-                            // FORCE 24-HOUR FORMAT para sa FullCalendar compatibility
                             if (!empty($startTime) && strtotime($startTime) !== false) {
                                 $event['startTime'] = date('H:i:s', strtotime($startTime));
                             }
@@ -127,12 +140,12 @@ class TeacherCalendarController extends Controller
                 }
             }
 
-            // Pagsama-samahin lahat ng events
             $events = array_merge($announcements, $classworks, $classroomEvents);
 
             return response()->json($events, 200);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Failed to fetch calendar events: ' . $e->getMessage()], 500);
+            Log::error('Teacher Calendar Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while loading the calendar.'], 500);
         }
     }
 }
