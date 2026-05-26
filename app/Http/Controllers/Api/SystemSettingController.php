@@ -19,6 +19,8 @@ use App\Models\ActivityLog;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache; 
+use Illuminate\Support\Facades\DB;
 
 class SystemSettingController extends Controller
 {
@@ -31,7 +33,10 @@ class SystemSettingController extends Controller
     public function index(Request $request)
     {
         try {
-            $activeSetting = SystemSetting::where('is_active', true)->first();
+            $activeSetting = Cache::remember('active_system_setting', 60, function () {
+                return SystemSetting::where('is_active', true)->first();
+            });
+
             return response()->json($activeSetting, 200);
         } catch (\Exception $e) {
             Log::error('SystemSettingController index Error: ' . $e->getMessage());
@@ -69,6 +74,8 @@ class SystemSettingController extends Controller
                 'description' => "Set the active School Year to {$newSetting->school_year} and Semester to {$newSetting->semester} Semester."
             ]);
 
+            Cache::forget('active_system_setting'); 
+
             return response()->json([
                     'message' => 'School Settings successfully updated!',
                     'setting' => $newSetting
@@ -99,6 +106,8 @@ class SystemSettingController extends Controller
                 ]);
             }
 
+            Cache::forget('active_system_setting'); 
+
             return response()->json(['message' => 'School settings have been completely reset.'], 200);
         } catch (\Exception $e) {
             Log::error('SystemSettingController reset Error: ' . $e->getMessage());
@@ -106,7 +115,7 @@ class SystemSettingController extends Controller
         }
     }
 
-    // PDF REPORT GENERATOR FUNCTION
+    // pdf report generator
     public function generateReport(Request $request)
     {
         if (!$this->checkAdmin($request)) {
@@ -114,14 +123,13 @@ class SystemSettingController extends Controller
         }
 
         try {
-            // Kukunin ang current user na nag-click ng print
             $user = Auth::user();
             $generatorName = $user ? $user->first_name . ' ' . $user->last_name : 'Administrator';
 
-            // Get Settings
-            $activeSetting = SystemSetting::where('is_active', true)->first();
+            $activeSetting = Cache::remember('active_system_setting', 60, function () {
+                return SystemSetting::where('is_active', true)->first();
+            });
 
-            // Get Users Stats
             $users = [
                 'students_active' => User::where('role', 'student')->where('status', 'active')->count(),
                 'students_inactive' => User::where('role', 'student')->where('status', 'inactive')->count(),
@@ -131,19 +139,16 @@ class SystemSettingController extends Controller
                 'admins_inactive' => User::where('role', 'admin')->where('status', 'inactive')->count(),
             ];
 
-            // Get Strands & Demographics
             $strands = Strand::withCount(['users' => function($query) {
                 $query->where('role', 'student');
             }])->get();
 
-            // Academic Setup
             $academics = [
                 'subjects' => Subject::count(),
                 'classrooms' => Classroom::count(),
                 'advisories' => AdvisoryClass::count(),
             ];
 
-            // Engagement Metrics
             $engagement = [
                 'classworks' => Classwork::count(),
                 'forms' => Form::count(),
@@ -152,7 +157,6 @@ class SystemSettingController extends Controller
                 'elibrary' => ELibrary::where('status', 'approved')->count(),
             ];
 
-            // Active Teachers Data
             $teachers = User::where('role', 'teacher')
                 ->where('status', 'active')
                 ->whereNull('deleted_at')
@@ -166,7 +170,6 @@ class SystemSettingController extends Controller
                     ];
                 });
 
-            // Setup Data for View
             $data = [
                 'generator_name' => $generatorName,
                 'settings' => $activeSetting ? $activeSetting->toArray() : null,
@@ -185,10 +188,7 @@ class SystemSettingController extends Controller
                 ]);
             }
 
-            // Generate PDF
             $pdf = Pdf::loadView('print.report', $data);
-
-            // Download directly to the browser
             return $pdf->download('HolyFace_System_Report_'.date('Y-m-d').'.pdf');
 
         } catch (\Exception $e) {
@@ -197,7 +197,7 @@ class SystemSettingController extends Controller
         }
     }
 
-    // MAINTENANCE MODE TOGGLE
+    // maintenance mode
     public function toggleMaintenance(Request $request)
     {
         if (!$this->checkAdmin($request)) {
@@ -205,19 +205,17 @@ class SystemSettingController extends Controller
         }
 
         try {
-            $activeSetting = SystemSetting::where('is_active', true)->first();
+            DB::beginTransaction();
+            $activeSetting = SystemSetting::where('is_active', true)->lockForUpdate()->first();
             
             if (!$activeSetting) {
+                DB::rollBack();
                 return response()->json(['message' => 'No active school setting found. Please set School Year first.'], 404);
             }
 
-            // Toggle ang boolean value
             $activeSetting->maintenance_mode = !$activeSetting->maintenance_mode;
-            
-            // timestamp kung kailan nag-ON
             $activeSetting->maintenance_started_at = $activeSetting->maintenance_mode ? now() : null;
             $activeSetting->save();
-
             $status = $activeSetting->maintenance_mode ? 'enabled' : 'disabled';
             $statusText = $activeSetting->maintenance_mode ? 'ON' : 'OFF';
 
@@ -227,12 +225,16 @@ class SystemSettingController extends Controller
                 'description' => "Turned {$statusText} the system maintenance mode loop."
             ]);
 
+            Cache::forget('active_system_setting'); 
+            DB::commit(); 
+
             return response()->json([
                 'message' => "Maintenance mode successfully $status.",
                 'setting' => $activeSetting
             ], 200);
 
         } catch (\Exception $e) {
+            DB::rollBack(); 
             Log::error('SystemSettingController toggleMaintenance Error: ' . $e->getMessage());
             return response()->json(['message' => 'An unexpected error occurred while toggling maintenance mode.'], 500);
         }

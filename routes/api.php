@@ -53,6 +53,9 @@ use App\Http\Controllers\Api\StudentCalendarController;
 use App\Http\Controllers\Api\StudentHomeController;
 use App\Http\Controllers\Api\StudentNotificationController;
 
+// Public Settings
+Route::get('/settings', [SystemSettingController::class, 'index']);
+
 // Public Auth Routes
 Route::middleware('throttle:5,1')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
@@ -62,9 +65,8 @@ Route::middleware('throttle:5,1')->group(function () {
     Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
 });
 
-// Protected Routes (Kailangan naka-login/may token bago ma-access)
+// Protected Routes
 Route::middleware('auth:sanctum')->group(function () {
-    // Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () { - mamaya na pag natapos na lahat gawin or i-update.
 
     // Admin User Records
     Route::get('/users', [UserController::class, 'index']);
@@ -81,11 +83,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/strands/{id}', [StrandController::class, 'destroy']);
 
     // Admin System Settings
-    Route::get('/settings', [SystemSettingController::class, 'index']);
-    Route::post('/settings', [SystemSettingController::class, 'store']);
-    Route::post('/settings/reset', [SystemSettingController::class, 'reset']);
+    Route::middleware('throttle:5,1')->group(function () {
+        Route::post('/settings', [SystemSettingController::class, 'store']);
+        Route::post('/settings/reset', [SystemSettingController::class, 'reset']);
+        Route::post('/settings/maintenance', [SystemSettingController::class, 'toggleMaintenance']);
+    });
     Route::get('/settings/report', [SystemSettingController::class, 'generateReport']);
-    Route::post('/settings/maintenance', [SystemSettingController::class, 'toggleMaintenance']);
 
     // Admin Subjects
     Route::get('/subjects', [SubjectController::class, 'index']);
