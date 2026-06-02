@@ -27,13 +27,13 @@
         <img src="/images/logo.png" class="letterhead-logo" alt="Logo" onerror="this.style.display='none'" />
         <div class="letterhead-text">
             <h1 class="school-name">HOLY FACE OF JESUS LYCEUM OF SAN JOSE INC.</h1>
-            <p class="school-address">R AND J BUILDING LOT 6 AND 8 BLOCK 9 MAYON AVENUE, AMITYVILLE</p>
-            <p class="school-contact">SAN JOSE, RODRIGUEZ, RIZAL | CONTACT: 09164369291</p>
+            <p class="school-address">BLOCK 5 LOT 28-34 VALENTINO VILLAGE, SAN JOSE, RODRIGUEZ, RIZAL</p>
+            <p class="school-contact">CONTACT: 09164369291</p>
         </div>
     </div>
 
     <div class="form-title">OFFICIAL QUESTIONNAIRE</div>
-    <div class="form-instruction" style="font-weight: bold; font-style: normal;">{{ $form->name }} <br> <span style="font-weight: normal; font-style: italic;">{{ $form->instruction }}</span></div>
+    <div class="form-instruction" style="font-weight: bold; font-style: normal;">{{ $form->name }} <br> <span style="font-weight: normal; font-style: italic; white-space: pre-line;">{{ $form->instruction }}</span></div>
 
     <div class="info-container">
         <div class="info-col">
