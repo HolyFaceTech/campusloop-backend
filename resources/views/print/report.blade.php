@@ -11,8 +11,8 @@
         <img src="{{ public_path('images/logo.png') }}" alt="School Logo" style="width: 100px; height: auto; margin-bottom: 10px;">
         
         <h1>HOLY FACE OF JESUS LYCEUM OF SAN JOSE INC</h1>
-        <p>R AND J BUILDING LOT 6 AND 8 BLOCK 9 MAYON AVENUE,</p>
-        <p>AMITYVILLE SAN JOSE, RODRIGUEZ, RIZAL | CONTACT: 09164369291</p>
+        <p>BLOCK 5 LOT 28-34 VALENTINO VILLAGE, SAN JOSE, RODRIGUEZ, RIZAL</p>
+        <p>CONTACT: 09164369291</p>
     </div>
 
     <div class="date-section">
