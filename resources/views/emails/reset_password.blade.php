@@ -10,7 +10,10 @@
         <div class="email-container">
             
             <div class="email-header">
-                CAMPUSLOOP
+                <img src="{{ $message->embed(public_path('images/logo.png')) }}" alt="CampusLoop Logo" style="max-height: 50px; display: block; margin: 0 auto;">
+                <div style="margin-top: 15px;">
+                    CAMPUSLOOP
+                </div>
             </div>
 
             <div class="email-body">

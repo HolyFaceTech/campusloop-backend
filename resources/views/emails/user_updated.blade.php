@@ -10,7 +10,10 @@
         <div class="email-container">
             
             <div class="email-header">
-                CAMPUSLOOP
+                <img src="{{ $message->embed(public_path('images/logo.png')) }}" alt="CampusLoop Logo" style="max-height: 50px; display: block; margin: 0 auto;">
+                <div style="margin-top: 15px;">
+                    CAMPUSLOOP
+                </div>
             </div>
 
             <div class="email-body">
@@ -18,10 +21,10 @@
                 <p>Dear <strong>{{ $user->first_name }}</strong>,</p>
                 <p>This is to inform you that an administrator has updated your CampusLoop account information. Please review the changes below:</p>
                 
-                <div style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; border: 1px solid #eeeeee; margin: 25px 0;">
+                <div style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; border: 1px solid #eeeeee; margin: 25px 0; overflow-x: auto;">
                     
                     @if(count($changedFields) > 0)
-                        <table style="width: 100%; font-size: 14px; color: #333; line-height: 1.8; border-collapse: collapse;">
+                        <table style="width: 100%; font-size: 14px; color: #333; line-height: 1.8; border-collapse: collapse; table-layout: fixed;">
                             <thead>
                                 <tr style="border-bottom: 2px solid #ddd; text-align: left;">
                                     <th style="padding-bottom: 8px;">Information</th>
@@ -32,9 +35,9 @@
                             <tbody>
                                 @foreach($changedFields as $label => $values)
                                 <tr style="border-bottom: 1px solid #eee;">
-                                    <td style="padding: 8px 0; color: #555;"><strong>{{ $label }}</strong></td>
+                                    <td style="padding: 8px 5px 8px 0; color: #555; word-wrap: break-word; word-break: break-word;"><strong>{{ $label }}</strong></td>
                                     
-                                    <td style="padding: 8px 0; color: #999;">
+                                    <td style="padding: 8px 5px 8px 0; color: #999; word-wrap: break-word; word-break: break-word;">
                                         @if($label === 'Password')
                                             ********
                                         @else
@@ -42,9 +45,9 @@
                                         @endif
                                     </td>
 
-                                    <td style="padding: 8px 0; color: #626F47; font-weight: 600;">
+                                    <td style="padding: 8px 0; color: #626F47; font-weight: 600; word-wrap: break-word; word-break: break-word;">
                                         @if($label === 'Password')
-                                            <span style="font-family: monospace; background: #ffcdd2; padding: 3px 8px; border-radius: 4px; color: #b71c1c;">
+                                            <span style="font-family: monospace; background: #ffcdd2; padding: 3px 8px; border-radius: 4px; color: #b71c1c; display: inline-block; word-break: break-all;">
                                                 {{ $values['new'] }}
                                             </span>
                                         @else
