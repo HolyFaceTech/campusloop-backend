@@ -113,7 +113,3 @@ The API is strictly separated into public and protected routes in `routes/api.ph
 
 - **Single Session Policy:** Logging in from a new device automatically invalidates the old session token.
 - **Information Leakage Protection:** Database operations and file handling are wrapped in Transaction blocks (`DB::beginTransaction()`) and safe `try-catch` structures logging to `storage/logs/laravel.log`.
-
-```
-
-```
