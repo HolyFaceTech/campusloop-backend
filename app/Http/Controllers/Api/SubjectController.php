@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Subject;
+use App\Models\Strand;
 use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB; 
@@ -186,6 +187,131 @@ class SubjectController extends Controller
             DB::rollBack();
             Log::error('SubjectController bulkDelete Error: ' . $e->getMessage() . ' on line ' . $e->getLine() . ' in ' . $e->getFile());
             return response()->json(['message' => 'An error occurred while deleting subjects.'], 500);
+        }
+    }
+
+    // IMPORT CSV
+    public function import(Request $request)
+    {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
+        $request->validate([
+            'file' => 'required|file|mimes:csv,txt|max:5120', 
+        ]);
+
+        try {
+            ini_set('auto_detect_line_endings', true);
+            $file = $request->file('file');
+            $handle = fopen($file->getPathname(), "r");
+            $header = fgetcsv($handle, 1000, ",");
+            
+            if (!$header) {
+                return response()->json(['message' => 'The CSV file is empty or cannot be read.'], 400);
+            }
+
+            // Remove BOM and clean headers
+            $header[0] = preg_replace('/[\xef\xbb\xbf]/', '', $header[0]);
+            $header = array_map('trim', $header);
+            $header = array_map('strtolower', $header);
+            $successCount = 0;
+            $skippedCount = 0;
+
+            while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
+                if (empty(array_filter($data))) continue; 
+                
+                if (count($header) !== count($data)) {
+                    $data = array_pad($data, count($header), '');
+                    $data = array_slice($data, 0, count($header));
+                }
+                
+                $row = array_combine($header, $data);
+                
+                // CSV INJECTION SANITIZATION
+                $row = array_map(function($value) {
+                    $value = trim($value ?? '');
+                    if (preg_match('/^[=\+\-\@]/', $value)) {
+                        $value = "'" . $value; 
+                    }
+                    return $value;
+                }, $row);
+
+                // Required Columns Check
+                if (empty($row['code']) || empty($row['description']) || empty($row['strand']) || empty($row['grade_level']) || empty($row['semester'])) {
+                    $skippedCount++;
+                    continue;
+                }
+
+                // Skip existing subject code
+                if (Subject::where('code', $row['code'])->exists()) {
+                    $skippedCount++;
+                    continue; 
+                }
+
+                DB::beginTransaction();
+                try {
+                    // Find Strand ID by Strand Name
+                    $strandName = $row['strand'];
+                    $strand = Strand::where('name', 'LIKE', $strandName)->first();
+                    
+                    if (!$strand) {
+                        DB::rollBack();
+                        $skippedCount++; // Kung hindi nag-e-exist ang strand, i-skip ito
+                        continue;
+                    }
+
+                    // SEMESTER VALIDATION 
+                    $rawSem = strtolower($row['semester']);
+                    $validSem = '1st'; // Default fallback
+                    if (str_contains($rawSem, '2') || str_contains($rawSem, 'nd')) {
+                        $validSem = '2nd';
+                    }
+
+                    // GRADE LEVEL VALIDATION
+                    $rawGrade = strtolower($row['grade_level']);
+                    $validGrade = '11'; // Default fallback
+                    if (str_contains($rawGrade, '12')) {
+                        $validGrade = '12';
+                    }
+
+                    Subject::create([
+                        'code'        => strtoupper($row['code']),
+                        'description' => $row['description'],
+                        'strand_id'   => $strand->id,
+                        'grade_level' => $validGrade,
+                        'semester'    => $validSem,
+                    ]);
+
+                    DB::commit(); 
+                    $successCount++;
+
+                } catch (\Exception $e) {
+                    DB::rollBack(); 
+                    Log::error('SubjectController CSV row Error: ' . $e->getMessage());
+                    $skippedCount++;
+                }
+            }
+            fclose($handle);
+
+            $activityDesc = "Successfully imported {$successCount} new subjects from a CSV file.";
+            if ($skippedCount > 0) {
+                $activityDesc .= " Skipped {$skippedCount} duplicates/errors.";
+            }
+
+            ActivityLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'Imported Subjects',
+                'description' => $activityDesc
+            ]);
+
+            return response()->json([
+                'message' => "Import complete! {$successCount} subjects created. {$skippedCount} skipped."
+            ], 200);
+
+        } catch (\Exception $e) {
+            Log::error('SubjectController import Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while importing the file.'], 500);
         }
     }
 }
