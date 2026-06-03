@@ -96,6 +96,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/subjects/{id}', [SubjectController::class, 'update']);
     Route::delete('/subjects/{id}', [SubjectController::class, 'destroy']);
     Route::post('/subjects/bulk-delete', [SubjectController::class, 'bulkDelete']);
+    Route::post('/subjects/import', [SubjectController::class, 'import']);
 
     // Admin Announcement
     Route::get('/announcements', [AnnouncementController::class, 'index']);
