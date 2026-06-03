@@ -1,59 +1,119 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# 🎓 CampusLoop - Backend API
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+This is the robust backend RESTful API for **CampusLoop**, an LMS and Student Portal for Senior High School. Built with Laravel 12, it handles authentication, data management, file uploads, PDF generation, email services via PHPMailer, and WebSockets via Laravel Reverb for real-time notifications.
 
-## About Laravel
+## 🛠️ Tech Stack & Dependencies
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- **Framework:** Laravel v12.0 (PHP 8.2.12)
+- **Authentication:** Laravel Sanctum v4.0 (Token-based)
+- **Database:** MySQL (using UUIDs as primary keys & SoftDeletes for Recycle Bin)
+- **WebSockets:** Laravel Reverb v1.8 (Real-time notifications)
+- **Mail:** PHPMailer v7.0
+- **PDF Generation:** DOMPDF v3.1
+- **Security:** Rate Limiting (Throttle), Single Session Policy.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## 📋 Prerequisites
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Before you begin, ensure you have the following installed:
 
-## Learning Laravel
+- PHP >= 8.2.12
+- Composer >= 2.8.12
+- MySQL Database (via XAMPP/Laragon)
+- Git
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+## 🚀 Installation & Setup Guide
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+**1. Clone the repository**
 
-## Laravel Sponsors
+```bash
+git clone [https://github.com/yourusername/campusloop-backend.git](https://github.com/yourusername/campusloop-backend.git)
+cd campusloop-backend
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+```
 
-### Premium Partners
+**2. Install dependencies**
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+```bash
+composer install
 
-## Contributing
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+**3. Set up Environment Variables**
+Copy the `.env.example` file to create your `.env` file:
 
-## Code of Conduct
+```bash
+cp .env.example .env
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+```
 
-## Security Vulnerabilities
+Open the `.env` file and update the following critical configurations:
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+```env
+# Database Config
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=campusloop_db
+DB_USERNAME=root
+DB_PASSWORD=
 
-## License
+# Frontend Connection
+FRONTEND_URL=http://localhost:5173
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+# Mail Configuration (Example using Gmail SMTP)
+MAIL_MAILER=smtp
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USERNAME=your-email@gmail.com
+MAIL_PASSWORD=your-app-password
+MAIL_ENCRYPTION=tls
+
+```
+
+**4. Generate Application Key**
+
+```bash
+php artisan key:generate
+
+```
+
+**5. Run Database Migrations**
+_(Ensure your MySQL server is running and the `campusloop_db` is created)_
+
+```bash
+php artisan migrate
+
+```
+
+**6. Create Storage Link**
+Required for viewing and downloading uploaded files (e.g., e-library, user files):
+
+```bash
+php artisan storage:link
+
+```
+
+**7. Start the Development Server**
+
+```bash
+php artisan serve
+
+```
+
+The API will now be available at `http://localhost:8000/api`.
+
+## 🛣️ API Routing Architecture
+
+The API is strictly separated into public and protected routes in `routes/api.php`:
+
+- **Public Routes (`throttle:5,1`):** `/login`, `/forgot-password`, `/reset-password`, `/verify-email`.
+- **Protected Routes (`auth:sanctum`):** Divided into `Admin`, `Teacher`, and `Student` controllers ensuring strict Role-Based Access Control (RBAC).
+
+## 🔒 Security Implementations
+
+- **Single Session Policy:** Logging in from a new device automatically invalidates the old session token.
+- **Information Leakage Protection:** Database operations and file handling are wrapped in Transaction blocks (`DB::beginTransaction()`) and safe `try-catch` structures logging to `storage/logs/laravel.log`.
+
+```
+
+```
