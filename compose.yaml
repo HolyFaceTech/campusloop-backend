@@ -1,0 +1,181 @@
+# CampusLoop backend stack (MySQL + API + queue + Reverb).
+# Full stack with frontend: docker compose --profile full up --build
+#
+# Clone both repos as siblings, e.g.:
+#   projects/campusloop-backend
+#   projects/campusloop-frontend
+#
+# Copy docker/compose.env.example to compose.env and adjust paths for WSL/Windows.
+
+name: campusloop
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-secret}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-campusloop}
+      MYSQL_USER: ${MYSQL_USER:-campusloop}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-secret}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${MYSQL_USER:-campusloop}", "-p${MYSQL_PASSWORD:-secret}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - campusloop
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:80"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      APP_URL: ${APP_URL:-http://localhost:8000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: ${MYSQL_DATABASE:-campusloop}
+      DB_USERNAME: ${MYSQL_USER:-campusloop}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-secret}
+      SESSION_DRIVER: database
+      CACHE_STORE: database
+      QUEUE_CONNECTION: database
+      BROADCAST_CONNECTION: reverb
+      REVERB_HOST: ${REVERB_HOST:-localhost}
+      REVERB_PORT: ${REVERB_PORT:-8080}
+      REVERB_SCHEME: ${REVERB_SCHEME:-http}
+      REVERB_APP_ID: ${REVERB_APP_ID:-campusloop}
+      REVERB_APP_KEY: ${REVERB_APP_KEY:-local-key}
+      REVERB_APP_SECRET: ${REVERB_APP_SECRET:-local-secret}
+      SANCTUM_STATEFUL_DOMAINS: ${SANCTUM_STATEFUL_DOMAINS:-localhost,localhost:5173,127.0.0.1,127.0.0.1:5173}
+    volumes:
+      - .:/var/www/html
+      - backend_vendor:/var/www/html/vendor
+      - backend_storage:/var/www/html/storage
+      - backend_bootstrap_cache:/var/www/html/bootstrap/cache
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - campusloop
+
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    restart: unless-stopped
+    entrypoint: ["entrypoint-worker.sh"]
+    command: ["php", "artisan", "queue:work", "--tries=3", "--timeout=90"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: ${MYSQL_DATABASE:-campusloop}
+      DB_USERNAME: ${MYSQL_USER:-campusloop}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-secret}
+      QUEUE_CONNECTION: database
+    volumes:
+      - .:/var/www/html
+      - backend_vendor:/var/www/html/vendor
+      - backend_storage:/var/www/html/storage
+      - backend_bootstrap_cache:/var/www/html/bootstrap/cache
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - campusloop
+
+  reverb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    restart: unless-stopped
+    entrypoint: ["entrypoint-worker.sh"]
+    command: ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080"]
+    ports:
+      - "${REVERB_PORT:-8080}:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: ${MYSQL_DATABASE:-campusloop}
+      DB_USERNAME: ${MYSQL_USER:-campusloop}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-secret}
+      BROADCAST_CONNECTION: reverb
+      REVERB_SERVER_HOST: 0.0.0.0
+      REVERB_SERVER_PORT: 8080
+      REVERB_HOST: ${REVERB_HOST:-localhost}
+      REVERB_PORT: ${REVERB_PORT:-8080}
+      REVERB_SCHEME: ${REVERB_SCHEME:-http}
+      REVERB_APP_ID: ${REVERB_APP_ID:-campusloop}
+      REVERB_APP_KEY: ${REVERB_APP_KEY:-local-key}
+      REVERB_APP_SECRET: ${REVERB_APP_SECRET:-local-secret}
+    volumes:
+      - .:/var/www/html
+      - backend_vendor:/var/www/html/vendor
+      - backend_storage:/var/www/html/storage
+      - backend_bootstrap_cache:/var/www/html/bootstrap/cache
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - campusloop
+
+  frontend:
+    profiles: ["full"]
+    build:
+      context: ${CAMPUSLOOP_FRONTEND_DIR:-../campusloop-frontend}
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api}
+      VITE_RECAPTCHA_SITE_KEY: ${VITE_RECAPTCHA_SITE_KEY:-}
+      CHOKIDAR_USEPOLLING: ${CHOKIDAR_USEPOLLING:-true}
+      WATCHPACK_POLLING: ${WATCHPACK_POLLING:-true}
+    volumes:
+      - ${CAMPUSLOOP_FRONTEND_DIR:-../campusloop-frontend}:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - campusloop
+
+networks:
+  campusloop:
+    name: campusloop
+    driver: bridge
+
+volumes:
+  mysql_data:
+  backend_vendor:
+  backend_storage:
+  backend_bootstrap_cache:
+  frontend_node_modules:
