@@ -1,0 +1,155 @@
+# CampusLoop production stack (EC2 + RDS + S3).
+# Usage:
+#   cp docker/compose.prod.env.example compose.prod.env
+#   docker compose -f compose.prod.yaml --env-file compose.prod.env up -d --build
+
+name: campusloop-prod
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:80"
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_URL: ${APP_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+      DB_CONNECTION: mysql
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      SESSION_DRIVER: database
+      CACHE_STORE: database
+      QUEUE_CONNECTION: database
+      BROADCAST_CONNECTION: ${BROADCAST_CONNECTION:-reverb}
+      FILESYSTEM_DISK: ${FILESYSTEM_DISK:-s3}
+      FILESYSTEM_PUBLIC_DRIVER: ${FILESYSTEM_PUBLIC_DRIVER:-s3}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+      AWS_BUCKET: ${AWS_BUCKET}
+      AWS_URL: ${AWS_URL:-}
+      AWS_ENDPOINT: ${AWS_ENDPOINT:-}
+      AWS_USE_PATH_STYLE_ENDPOINT: ${AWS_USE_PATH_STYLE_ENDPOINT:-false}
+      REVERB_HOST: ${REVERB_HOST:-localhost}
+      REVERB_PORT: ${REVERB_PORT:-8080}
+      REVERB_SCHEME: ${REVERB_SCHEME:-http}
+      REVERB_APP_ID: ${REVERB_APP_ID}
+      REVERB_APP_KEY: ${REVERB_APP_KEY}
+      REVERB_APP_SECRET: ${REVERB_APP_SECRET}
+      MIGRATE_ON_START: ${MIGRATE_ON_START:-false}
+      SANCTUM_STATEFUL_DOMAINS: ${SANCTUM_STATEFUL_DOMAINS}
+    volumes:
+      - ./.env:/var/www/html/.env:ro
+      - backend_storage:/var/www/html/storage
+      - backend_bootstrap_cache:/var/www/html/bootstrap/cache
+    networks:
+      - campusloop
+
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    entrypoint: ["entrypoint-worker.sh"]
+    command: ["php", "artisan", "queue:work", "--tries=3", "--timeout=90"]
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      APP_ENV: production
+      DB_CONNECTION: mysql
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      QUEUE_CONNECTION: database
+      FILESYSTEM_DISK: ${FILESYSTEM_DISK:-s3}
+      FILESYSTEM_PUBLIC_DRIVER: ${FILESYSTEM_PUBLIC_DRIVER:-s3}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+      AWS_BUCKET: ${AWS_BUCKET}
+      AWS_URL: ${AWS_URL:-}
+    volumes:
+      - ./.env:/var/www/html/.env:ro
+      - backend_storage:/var/www/html/storage
+      - backend_bootstrap_cache:/var/www/html/bootstrap/cache
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - campusloop
+
+  reverb:
+    profiles: ["reverb"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    entrypoint: ["entrypoint-worker.sh"]
+    command: ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080"]
+    ports:
+      - "${REVERB_PORT:-8081}:8080"
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      APP_ENV: production
+      DB_CONNECTION: mysql
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      BROADCAST_CONNECTION: reverb
+      REVERB_SERVER_HOST: 0.0.0.0
+      REVERB_SERVER_PORT: 8080
+      REVERB_HOST: ${REVERB_HOST}
+      REVERB_PORT: ${REVERB_PORT:-8080}
+      REVERB_SCHEME: ${REVERB_SCHEME:-http}
+      REVERB_APP_ID: ${REVERB_APP_ID}
+      REVERB_APP_KEY: ${REVERB_APP_KEY}
+      REVERB_APP_SECRET: ${REVERB_APP_SECRET}
+    volumes:
+      - ./.env:/var/www/html/.env:ro
+      - backend_storage:/var/www/html/storage
+      - backend_bootstrap_cache:/var/www/html/bootstrap/cache
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - campusloop
+
+  frontend:
+    build:
+      context: ${CAMPUSLOOP_FRONTEND_DIR}
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_RECAPTCHA_SITE_KEY: ${VITE_RECAPTCHA_SITE_KEY:-}
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      - backend
+    networks:
+      - campusloop
+
+networks:
+  campusloop:
+    name: campusloop-prod
+    driver: bridge
+
+volumes:
+  backend_storage:
+  backend_bootstrap_cache:

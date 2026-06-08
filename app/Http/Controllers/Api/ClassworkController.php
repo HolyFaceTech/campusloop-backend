@@ -16,6 +16,7 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 use App\Mail\NewClassworkPosted;
+use App\Support\PublicFileStorage;
 
 class ClassworkController extends Controller
 {
@@ -89,7 +90,7 @@ class ClassworkController extends Controller
                         'id' => (string) Str::uuid(),
                         'owner_id' => $user->id,
                         'name' => $originalName,
-                        'path' => '/storage/' . $path,
+                        'path' => PublicFileStorage::publicPath($path),
                         'file_extension' => $uploadedFile->getClientOriginalExtension(),
                         'file_size' => $uploadedFile->getSize(),
                         'attachable_type' => Classwork::class,
@@ -184,8 +185,7 @@ class ClassworkController extends Controller
             if ($request->has('deleted_file_ids')) {
                 $filesToDelete = File::whereIn('id', $request->deleted_file_ids)->get();
                 foreach ($filesToDelete as $f) {
-                    $relativePath = str_replace('/storage/', '', $f->path);
-                    Storage::disk('public')->delete($relativePath);
+                    PublicFileStorage::deleteStored($f->path);
                     $f->delete();
                 }
             }
@@ -204,7 +204,7 @@ class ClassworkController extends Controller
                         'id' => (string) Str::uuid(),
                         'owner_id' => $user->id,
                         'name' => $originalName,
-                        'path' => '/storage/' . $path,
+                        'path' => PublicFileStorage::publicPath($path),
                         'file_extension' => $uploadedFile->getClientOriginalExtension(),
                         'file_size' => $uploadedFile->getSize(),
                         'attachable_type' => Classwork::class,

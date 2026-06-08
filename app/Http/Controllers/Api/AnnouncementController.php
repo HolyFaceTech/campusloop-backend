@@ -14,6 +14,7 @@ use Illuminate\Support\Str;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
+use App\Support\PublicFileStorage;
 
 class AnnouncementController extends Controller
 {
@@ -121,7 +122,7 @@ class AnnouncementController extends Controller
                     $announcement->files()->create([
                         'owner_id' => $request->user()->id,
                         'name' => $file->getClientOriginalName(),
-                        'path' => '/storage/' . $path,
+                        'path' => PublicFileStorage::publicPath($path),
                         'file_extension' => $file->getClientOriginalExtension(),
                         'file_size' => $file->getSize()
                     ]);
@@ -215,7 +216,7 @@ class AnnouncementController extends Controller
                 $filesToDelete = File::whereIn('id', $request->deleted_file_ids)->get();
                 foreach ($filesToDelete as $file) {
                     // storage path
-                    Storage::disk('public')->delete(str_replace('/storage/', '', $file->path));
+                    PublicFileStorage::deleteStored($file->path);
                     $file->delete(); 
                 }
             }
@@ -227,7 +228,7 @@ class AnnouncementController extends Controller
                     $announcement->files()->create([
                         'owner_id' => $request->user()->id,
                         'name' => $file->getClientOriginalName(),
-                        'path' => '/storage/' . $path,
+                        'path' => PublicFileStorage::publicPath($path),
                         'file_extension' => $file->getClientOriginalExtension(),
                         'file_size' => $file->getSize()
                     ]);
@@ -265,7 +266,7 @@ class AnnouncementController extends Controller
 
             // storage path
             foreach ($announcement->files as $file) {
-                Storage::disk('public')->delete(str_replace('/storage/', '', $file->path));
+                PublicFileStorage::deleteStored($file->path);
             }
 
             $announcement->delete(); 

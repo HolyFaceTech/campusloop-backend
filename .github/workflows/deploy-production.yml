@@ -1,0 +1,31 @@
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, campusloop-prod]
+    defaults:
+      run:
+        working-directory: /opt/campusloop/campusloop-backend
+
+    steps:
+      - name: Pull latest backend
+        run: git pull origin main
+
+      - name: Build and start backend services
+        run: |
+          docker compose -f compose.prod.yaml --env-file compose.prod.env up -d --build backend queue
+
+      - name: Run migrations
+        run: |
+          docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan migrate --force
+
+      - name: Clear and rebuild caches
+        run: |
+          docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan config:cache
+          docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan route:cache
+          docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan view:cache

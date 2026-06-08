@@ -14,6 +14,7 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage; 
 use Illuminate\Support\Facades\Log; 
 use Carbon\Carbon;
+use App\Support\PublicFileStorage;
 
 class StudentClassroomController extends Controller
 {
@@ -276,8 +277,7 @@ class StudentClassroomController extends Controller
 
                     // storage path
                     foreach ($files as $file) {
-                        $relativePath = str_replace('/storage/', '', $file->path);
-                        Storage::disk('public')->delete($relativePath);
+                        PublicFileStorage::deleteStored($file->path);
                         $file->delete();
                     }
 
@@ -321,7 +321,7 @@ class StudentClassroomController extends Controller
                         'id' => (string) Str::uuid(),
                         'owner_id' => $user->id,
                         'name' => $filename,
-                        'path' => '/storage/' . $path,
+                        'path' => PublicFileStorage::publicPath($path),
                         'file_extension' => $uploadedFile->getClientOriginalExtension(),
                         'file_size' => $uploadedFile->getSize(),
                         'attachable_type' => 'classwork_submission', 
@@ -401,8 +401,7 @@ class StudentClassroomController extends Controller
 
             // storage path
             foreach ($files as $file) {
-                $relativePath = str_replace('/storage/', '', $file->path);
-                Storage::disk('public')->delete($relativePath);
+                PublicFileStorage::deleteStored($file->path);
                 $file->delete();
             }
 

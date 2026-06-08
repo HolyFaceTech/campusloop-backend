@@ -13,6 +13,7 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB; 
 use Illuminate\Validation\ValidationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use App\Support\PublicFileStorage;
 
 class ELibraryController extends Controller
 {
@@ -86,7 +87,7 @@ class ELibraryController extends Controller
                     $library->files()->create([
                         'owner_id' => $request->user()->id,
                         'name' => $file->getClientOriginalName(),
-                        'path' => $path,
+                        'path' => PublicFileStorage::publicPath($path),
                         'file_extension' => $file->getClientOriginalExtension(),
                         'file_size' => $file->getSize(),
                     ]);
@@ -154,7 +155,7 @@ class ELibraryController extends Controller
             if ($request->has('deleted_file_ids')) {
                 $filesToDelete = $library->files()->whereIn('id', $request->deleted_file_ids)->get();
                 foreach ($filesToDelete as $f) {
-                    Storage::disk('public')->delete($f->path);
+                    PublicFileStorage::deleteStored($f->path);
                     $f->delete();
                 }
             }
@@ -165,7 +166,7 @@ class ELibraryController extends Controller
                     $library->files()->create([
                         'owner_id' => $request->user()->id,
                         'name' => $file->getClientOriginalName(),
-                        'path' => $path,
+                        'path' => PublicFileStorage::publicPath($path),
                         'file_extension' => $file->getClientOriginalExtension(),
                         'file_size' => $file->getSize(),
                     ]);
