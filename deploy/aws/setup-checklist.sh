@@ -13,11 +13,12 @@ CampusLoop AWS setup checklist (ap-southeast-1 recommended)
    - Note bucket name and region for compose.prod.env
 
 2. IAM policy + EC2 role
-   - Edit deploy/aws/iam-ec2-s3-policy.json (replace YOUR_BUCKET_NAME)
-   - Create IAM policy from JSON
-   - Create IAM role: EC2 trust policy
+   - Edit deploy/aws/iam-ec2-s3-policy.json (replace YOUR_BUCKET_NAME with exact bucket, e.g. campusloop-prod-uploads-holyface)
+   - Create IAM policy from JSON (ListBucket on bucket ARN; object actions on bucket/*)
+   - Create IAM role: EC2 trust policy (CampusLoopEC2Role)
    - Attach S3 policy + AmazonSSMManagedInstanceCore (optional, for Session Manager)
    - Attach role to EC2 instance (no AWS keys in .env)
+   - Verify on EC2: aws s3 cp /tmp/test.txt s3://YOUR_BUCKET_NAME/test.txt --region YOUR_REGION
 
 3. RDS MySQL 8.x
    - Identifier: campusloop-prod
