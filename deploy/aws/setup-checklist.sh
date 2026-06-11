@@ -10,6 +10,7 @@ CampusLoop AWS setup checklist (ap-southeast-1 recommended)
 1. S3 bucket
    - Name: campusloop-prod-uploads-<unique>
    - Block all public access: ON
+   - Object Ownership: Bucket owner enforced (ACLs disabled) — required by Laravel S3 config
    - Note bucket name and region for compose.prod.env
 
 2. IAM policy + EC2 role
