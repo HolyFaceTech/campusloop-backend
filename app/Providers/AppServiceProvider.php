@@ -2,13 +2,13 @@
 
 namespace App\Providers;
 
+use App\Filesystem\NoAclS3Adapter;
 use Aws\S3\S3Client;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
 use App\Models\PersonalAccessToken;
-use League\Flysystem\AwsS3V3\AwsS3V3Adapter as S3Adapter;
 use League\Flysystem\Filesystem;
 
 class AppServiceProvider extends ServiceProvider
@@ -28,7 +28,6 @@ class AppServiceProvider extends ServiceProvider
     {
         Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
 
-        // S3 buckets with "Bucket owner enforced" reject ACL headers on PutObject.
         Storage::extend('s3', function ($app, array $config) {
             $clientConfig = [
                 'version' => 'latest',
@@ -52,7 +51,7 @@ class AppServiceProvider extends ServiceProvider
 
             $client = new S3Client($clientConfig);
 
-            $adapter = new S3Adapter(
+            $adapter = new NoAclS3Adapter(
                 $client,
                 $config['bucket'],
                 $config['root'] ?? '',
@@ -61,8 +60,12 @@ class AppServiceProvider extends ServiceProvider
                 $config['options'] ?? [],
             );
 
+            $filesystemConfig = array_merge($config, [
+                'retain_visibility' => false,
+            ]);
+
             return new FilesystemAdapter(
-                new Filesystem($adapter, $config),
+                new Filesystem($adapter, $filesystemConfig),
                 $adapter,
                 $config
             );

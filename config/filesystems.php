@@ -47,12 +47,10 @@ return [
             'url' => env('AWS_URL'),
             'endpoint' => env('AWS_ENDPOINT'),
             'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
-            // Bucket owner enforced (ACLs disabled) — do not send ACL on PutObject
+            // Bucket owner enforced (ACLs disabled) — NoAclS3Adapter skips ACL on PutObject
             'throw' => false,
             'report' => false,
-            'options' => [
-                'ACL' => null,
-            ],
+            'retain_visibility' => false,
         ] : [
             'driver' => 'local',
             'root' => storage_path('app/public'),
@@ -73,9 +71,7 @@ return [
             'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
             'throw' => false,
             'report' => false,
-            'options' => [
-                'ACL' => null,
-            ],
+            'retain_visibility' => false,
         ],
 
     ],
