@@ -2,6 +2,8 @@
 
 namespace App\Support;
 
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Storage;
 
 class PublicFileStorage
@@ -9,6 +11,24 @@ class PublicFileStorage
     public static function disk()
     {
         return Storage::disk('public');
+    }
+
+    /**
+     * Persisted DB value for a stored object (relative key on S3, /storage path locally).
+     */
+    public static function dbPath(string $relativePath): string
+    {
+        $relativePath = ltrim($relativePath, '/');
+
+        if ($relativePath === '') {
+            throw new \RuntimeException('Cannot build a storage path for an empty key.');
+        }
+
+        if (config('filesystems.disks.public.driver') === 's3') {
+            return $relativePath;
+        }
+
+        return '/storage/'.$relativePath;
     }
 
     public static function publicPath(string $relativePath): string
@@ -27,9 +47,26 @@ class PublicFileStorage
     }
 
     /**
+     * @return list<UploadedFile>
+     */
+    public static function normalizeUploadedFiles(mixed $files): array
+    {
+        if ($files === null) {
+            return [];
+        }
+
+        $normalized = Arr::wrap($files);
+
+        return array_values(array_filter(
+            $normalized,
+            fn ($file) => $file instanceof UploadedFile
+        ));
+    }
+
+    /**
      * Store an uploaded file on the public disk and return the persisted path value.
      *
-     * @param  \Illuminate\Http\UploadedFile  $file
+     * @param  UploadedFile  $file
      */
     public static function storeUploaded($file, string $directory): string
     {
@@ -39,7 +76,7 @@ class PublicFileStorage
             throw new \RuntimeException('File upload failed. Check storage configuration and permissions.');
         }
 
-        return self::publicPath($relativePath);
+        return self::dbPath($relativePath);
     }
 
     /**
