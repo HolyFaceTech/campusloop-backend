@@ -122,7 +122,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/student-grades', [AdminGradeController::class, 'index']);
     Route::get('/admin/student-grades/{studentId}', [AdminGradeController::class, 'showStudentGrades']);
     Route::post('/admin/student-grades/approve', [AdminGradeController::class, 'approveGrade']);
+    Route::post('/admin/student-grades/bulk-approve', [AdminGradeController::class, 'bulkApproveGrades']); 
     Route::post('/admin/student-grades/decline', [AdminGradeController::class, 'declineGrade']);
+    Route::post('/admin/student-grades/bulk-decline', [AdminGradeController::class, 'bulkDeclineGrades']); 
+    Route::post('/admin/student-grades/bulk-delete', [AdminGradeController::class, 'bulkDeleteGrades']); 
 
     // Admin Classroom
     Route::get('admin/classrooms', [AdminClassroomController::class, 'index']);
