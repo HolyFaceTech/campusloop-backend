@@ -66,18 +66,43 @@ class ELibraryController extends Controller
         }
 
         try {
+            if (! $request->hasFile('files')) {
+                throw ValidationException::withMessages([
+                    'files' => ['Please attach at least one PDF file.'],
+                ]);
+            }
+
+            $uploadedFiles = PublicFileStorage::normalizeUploadedFiles($request->file('files'));
+
+            if ($uploadedFiles === []) {
+                throw ValidationException::withMessages([
+                    'files' => ['Please attach at least one PDF file.'],
+                ]);
+            }
+
             $request->validate([
                 'title' => 'required|string|max:255',
                 'description' => 'required|string',
-                'files' => 'required|array|max:5',
-                'files.*' => 'required|file|mimes:pdf|max:15360',
             ]);
+
+            if (count($uploadedFiles) > 5) {
+                throw ValidationException::withMessages([
+                    'files' => ['You can upload at most 5 files.'],
+                ]);
+            }
+
+            foreach ($uploadedFiles as $file) {
+                validator(
+                    ['upload' => $file],
+                    ['upload' => 'required|file|mimes:pdf|max:15360']
+                )->validate();
+            }
 
             $currentUser = $request->user();
             $teacherName = $currentUser->first_name . ' ' . $currentUser->last_name;
             $shortTitle = Str::limit($request->title, 30);
 
-            DB::transaction(function () use ($request, $currentUser, $teacherName, $shortTitle) {
+            DB::transaction(function () use ($request, $currentUser, $uploadedFiles) {
                 $library = ELibrary::create([
                     'creator_id' => $currentUser->id,
                     'title' => $request->title,
@@ -85,7 +110,7 @@ class ELibraryController extends Controller
                     'status' => 'pending',
                 ]);
 
-                foreach ($request->file('files') as $file) {
+                foreach ($uploadedFiles as $file) {
                     $library->files()->create([
                         'owner_id' => $currentUser->id,
                         'name' => $file->getClientOriginalName(),
@@ -94,7 +119,9 @@ class ELibraryController extends Controller
                         'file_size' => $file->getSize(),
                     ]);
                 }
+            });
 
+            try {
                 $admins = User::where('role', 'admin')->get();
 
                 foreach ($admins as $admin) {
@@ -114,7 +141,9 @@ class ELibraryController extends Controller
                     'action' => 'Submitted E-Library Material',
                     'description' => "Uploaded a new material for approval: '{$shortTitle}'.",
                 ]);
-            });
+            } catch (\Exception $sideEffectError) {
+                Log::warning('ELibrary store side-effect failed: '.$sideEffectError->getMessage());
+            }
 
             return response()->json(['message' => 'Uploaded to Global Library. Pending Admin Approval.'], 201);
 
@@ -122,7 +151,11 @@ class ELibraryController extends Controller
             return response()->json(['message' => 'Validation Error', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
             Log::error('Create ELibrary Error: ' . $e->getMessage() . ' on line ' . $e->getLine() . ' in ' . $e->getFile());
-            return response()->json(['message' => 'An unexpected error occurred while saving.'], 500);
+            $message = $e instanceof \RuntimeException
+                ? $e->getMessage()
+                : 'An unexpected error occurred while saving.';
+
+            return response()->json(['message' => $message], 500);
         }
     }
 
@@ -160,7 +193,14 @@ class ELibraryController extends Controller
             }
 
             if ($request->hasFile('files')) {
-                foreach ($request->file('files') as $file) {
+                $uploadedFiles = PublicFileStorage::normalizeUploadedFiles($request->file('files'));
+
+                foreach ($uploadedFiles as $file) {
+                    validator(
+                        ['upload' => $file],
+                        ['upload' => 'required|file|mimes:pdf|max:15360']
+                    )->validate();
+
                     $library->files()->create([
                         'owner_id' => $request->user()->id,
                         'name' => $file->getClientOriginalName(),
