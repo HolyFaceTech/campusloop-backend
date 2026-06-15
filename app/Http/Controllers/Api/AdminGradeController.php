@@ -109,7 +109,7 @@ class AdminGradeController extends Controller
         }
     }
 
-    // Approved Grades
+    // Single Approve Grade
     public function approveGrade(Request $request)
     {
         if (!$this->checkAdmin($request)) {
@@ -118,71 +118,101 @@ class AdminGradeController extends Controller
 
         try {
             $request->validate(['grade_id' => 'required|uuid']);
-
             DB::beginTransaction();
 
             $grade = FinalGrade::findOrFail($request->grade_id);
-            
-            $grade->update([
-                'status' => 'approved',
-                'admin_feedback' => null, 
-            ]);
-
-            $student = User::findOrFail($grade->student_id);
-            $subject = DB::table('subjects')->where('id', $grade->subject_id)->first();
-            $subjectName = $subject ? $subject->description : 'Subject';
-
-            $advisoryClass = DB::table('advisory_classes')
-                ->join('advisory_student', 'advisory_classes.id', '=', 'advisory_student.advisory_class_id')
-                ->where('advisory_student.student_id', $grade->student_id)
-                ->where('advisory_classes.teacher_id', $grade->teacher_id)
-                ->where('advisory_classes.school_year', $grade->school_year)
-                ->whereNull('advisory_classes.deleted_at')
-                ->select('advisory_classes.id as class_id', 'advisory_classes.section')
-                ->first();
-                
-            $sectionName = $advisoryClass ? "({$advisoryClass->section})" : "";
-            $link = $advisoryClass ? "/teacher/advisory/{$advisoryClass->class_id}" : "/teacher/advisory";
-            $currentTime = now()->toDateTimeString();
-            $semester = $grade->semester; 
-
-            DB::table('notifications')->insert([
-                'id' => Str::uuid()->toString(),
-                'user_id' => $grade->teacher_id,
-                'description' => "Your submitted {$subjectName} grade for {$student->first_name} {$student->last_name} {$sectionName} ({$semester} Semester) was approved.",
-                'link' => $link, 
-                'is_read' => false,
-                'created_at' => $currentTime, 
-                'updated_at' => $currentTime,
-            ]);
-
-            DB::table('notifications')->insert([
-                'id' => Str::uuid()->toString(),
-                'user_id' => $grade->student_id,
-                'description' => "Your final grade in {$subjectName} for SY {$grade->school_year} ({$semester} Semester) is now ready to view.",
-                'link' => "/student/grades", 
-                'is_read' => false,
-                'created_at' => $currentTime, 
-                'updated_at' => $currentTime,
-            ]);
-
-            ActivityLog::create([
-                'user_id' => $request->user()->id,
-                'action' => 'Approved Student Grade',
-                'description' => "Approved the {$subjectName} grade of {$student->first_name} {$student->last_name} for SY {$grade->school_year}."
-            ]);
+            $grade->update(['status' => 'approved', 'admin_feedback' => null]);
+            $this->logAndNotifyApproval($grade, $request->user()->id);
 
             DB::commit();
             return response()->json(['message' => 'Grade approved and locked.'], 200);
-
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('AdminGradeController approveGrade Error: ' . $e->getMessage() . ' on line ' . $e->getLine() . ' in ' . $e->getFile());
+            Log::error('AdminGradeController approveGrade Error: ' . $e->getMessage());
             return response()->json(['message' => 'An unexpected error occurred while approving the grade.'], 500);
         }
     }
 
-    // Declined Grades
+    // BULK Approve Grades
+    public function bulkApproveGrades(Request $request)
+    {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
+        try {
+            $request->validate(['grade_ids' => 'required|array']);
+            DB::beginTransaction();
+
+            $grades = FinalGrade::whereIn('id', $request->grade_ids)->get();
+            $count = 0;
+
+            foreach ($grades as $grade) {
+                if ($grade->status !== 'approved') {
+                    $grade->update(['status' => 'approved', 'admin_feedback' => null]);
+                    $this->logAndNotifyApproval($grade, $request->user()->id);
+                    $count++;
+                }
+            }
+
+            DB::commit();
+            return response()->json(['message' => "{$count} grades successfully approved and locked."], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('AdminGradeController bulkApproveGrades Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while bulk approving.'], 500);
+        }
+    }
+
+    // Helper for Approval Notifications
+    private function logAndNotifyApproval($grade, $adminId)
+    {
+        $student = User::find($grade->student_id);
+        $subject = DB::table('subjects')->where('id', $grade->subject_id)->first();
+        $subjectName = $subject ? $subject->description : 'Subject';
+
+        $advisoryClass = DB::table('advisory_classes')
+            ->join('advisory_student', 'advisory_classes.id', '=', 'advisory_student.advisory_class_id')
+            ->where('advisory_student.student_id', $grade->student_id)
+            ->where('advisory_classes.teacher_id', $grade->teacher_id)
+            ->where('advisory_classes.school_year', $grade->school_year)
+            ->whereNull('advisory_classes.deleted_at')
+            ->select('advisory_classes.id as class_id', 'advisory_classes.section')
+            ->first();
+            
+        $sectionName = $advisoryClass ? "({$advisoryClass->section})" : "";
+        $link = $advisoryClass ? "/teacher/advisory/{$advisoryClass->class_id}" : "/teacher/advisory";
+        $currentTime = now()->toDateTimeString();
+        $semester = $grade->semester; 
+
+        DB::table('notifications')->insert([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $grade->teacher_id,
+            'description' => "Your submitted {$subjectName} grade for {$student->first_name} {$student->last_name} {$sectionName} ({$semester} Semester) was approved.",
+            'link' => $link, 
+            'is_read' => false,
+            'created_at' => $currentTime, 
+            'updated_at' => $currentTime,
+        ]);
+
+        DB::table('notifications')->insert([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $grade->student_id,
+            'description' => "Your final grade in {$subjectName} for SY {$grade->school_year} ({$semester} Semester) is now ready to view.",
+            'link' => "/student/grades", 
+            'is_read' => false,
+            'created_at' => $currentTime, 
+            'updated_at' => $currentTime,
+        ]);
+
+        ActivityLog::create([
+            'user_id' => $adminId,
+            'action' => 'Approved Student Grade',
+            'description' => "Approved the {$subjectName} grade of {$student->first_name} {$student->last_name} for SY {$grade->school_year}."
+        ]);
+    }
+
+    // Single Decline Grades
     public function declineGrade(Request $request)
     {
         if (!$this->checkAdmin($request)) {
@@ -190,59 +220,116 @@ class AdminGradeController extends Controller
         }
 
         try {
-            $request->validate([
-                'grade_id' => 'required|uuid',
-                'feedback' => 'required|string'
-            ]);
-
+            $request->validate(['grade_id' => 'required|uuid', 'feedback' => 'required|string']);
             DB::beginTransaction();
 
             $grade = FinalGrade::findOrFail($request->grade_id);
-            
-            $grade->update([
-                'status' => 'declined',
-                'admin_feedback' => $request->feedback,
-            ]);
-
-            $student = User::findOrFail($grade->student_id);
-            $subject = DB::table('subjects')->where('id', $grade->subject_id)->first();
-            $subjectName = $subject ? $subject->description : 'Subject';
-
-            $advisoryClass = DB::table('advisory_classes')
-                ->join('advisory_student', 'advisory_classes.id', '=', 'advisory_student.advisory_class_id')
-                ->where('advisory_student.student_id', $grade->student_id)
-                ->where('advisory_classes.teacher_id', $grade->teacher_id)
-                ->where('advisory_classes.school_year', $grade->school_year)
-                ->whereNull('advisory_classes.deleted_at')
-                ->select('advisory_classes.id as class_id', 'advisory_classes.section')
-                ->first();
-
-            $sectionName = $advisoryClass ? "({$advisoryClass->section})" : "";
-            $link = $advisoryClass ? "/teacher/advisory/{$advisoryClass->class_id}" : "/teacher/advisory";
-
-            DB::table('notifications')->insert([
-                'id' => Str::uuid()->toString(),
-                'user_id' => $grade->teacher_id,
-                'description' => "Your submitted grade for {$student->first_name} {$student->last_name} {$sectionName} was declined. Feedback: " . Str::limit($request->feedback, 30),
-                'link' => $link, 
-                'is_read' => false,
-                'created_at' => now(), 
-                'updated_at' => now(),
-            ]);
-
-            ActivityLog::create([
-                'user_id' => $request->user()->id,
-                'action' => 'Declined Student Grade',
-                'description' => "Declined the {$subjectName} grade of {$student->first_name} {$student->last_name} and provided feedback."
-            ]);
+            $grade->update(['status' => 'declined', 'admin_feedback' => $request->feedback]);
+            $this->logAndNotifyDecline($grade, $request->feedback, $request->user()->id);
 
             DB::commit();
             return response()->json(['message' => 'Grade declined and returned to teacher.'], 200);
-
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('AdminGradeController declineGrade Error: ' . $e->getMessage() . ' on line ' . $e->getLine() . ' in ' . $e->getFile());
+            Log::error('AdminGradeController declineGrade Error: ' . $e->getMessage());
             return response()->json(['message' => 'An unexpected error occurred while declining the grade.'], 500);
+        }
+    }
+
+    // BULK Decline Grades
+    public function bulkDeclineGrades(Request $request)
+    {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
+        try {
+            $request->validate(['grade_ids' => 'required|array', 'feedback' => 'required|string']);
+            DB::beginTransaction();
+
+            $grades = FinalGrade::whereIn('id', $request->grade_ids)->get();
+            $count = 0;
+
+            foreach ($grades as $grade) {
+                $grade->update(['status' => 'declined', 'admin_feedback' => $request->feedback]);
+                $this->logAndNotifyDecline($grade, $request->feedback, $request->user()->id);
+                $count++;
+            }
+
+            DB::commit();
+            return response()->json(['message' => "{$count} grades successfully declined and returned to teacher."], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('AdminGradeController bulkDeclineGrades Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while bulk declining.'], 500);
+        }
+    }
+
+    // Helper for Decline Notifications
+    private function logAndNotifyDecline($grade, $feedback, $adminId)
+    {
+        $student = User::find($grade->student_id);
+        $subject = DB::table('subjects')->where('id', $grade->subject_id)->first();
+        $subjectName = $subject ? $subject->description : 'Subject';
+
+        $advisoryClass = DB::table('advisory_classes')
+            ->join('advisory_student', 'advisory_classes.id', '=', 'advisory_student.advisory_class_id')
+            ->where('advisory_student.student_id', $grade->student_id)
+            ->where('advisory_classes.teacher_id', $grade->teacher_id)
+            ->where('advisory_classes.school_year', $grade->school_year)
+            ->whereNull('advisory_classes.deleted_at')
+            ->select('advisory_classes.id as class_id', 'advisory_classes.section')
+            ->first();
+
+        $sectionName = $advisoryClass ? "({$advisoryClass->section})" : "";
+        $link = $advisoryClass ? "/teacher/advisory/{$advisoryClass->class_id}" : "/teacher/advisory";
+
+        DB::table('notifications')->insert([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $grade->teacher_id,
+            'description' => "Your submitted grade for {$student->first_name} {$student->last_name} {$sectionName} was declined. Feedback: " . Str::limit($feedback, 30),
+            'link' => $link, 
+            'is_read' => false,
+            'created_at' => now(), 
+            'updated_at' => now(),
+        ]);
+
+        ActivityLog::create([
+            'user_id' => $adminId,
+            'action' => 'Declined Student Grade',
+            'description' => "Declined the {$subjectName} grade of {$student->first_name} {$student->last_name} and provided feedback."
+        ]);
+    }
+
+    // bulk and single deletion
+    public function bulkDeleteGrades(Request $request)
+    {
+        if (!$this->checkAdmin($request)) {
+            return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
+        }
+
+        try {
+            $request->validate(['grade_ids' => 'required|array']);
+            DB::beginTransaction();
+
+            $count = FinalGrade::whereIn('id', $request->grade_ids)
+                               ->where('status', 'approved')
+                               ->forceDelete();
+
+            if ($count > 0) {
+                ActivityLog::create([
+                    'user_id' => $request->user()->id,
+                    'action' => 'Bulk Deleted Student Grades',
+                    'description' => "Permanently deleted {$count} approved final grade records."
+                ]);
+            }
+
+            DB::commit();
+            return response()->json(['message' => "{$count} approved grades successfully deleted."], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('AdminGradeController bulkDeleteGrades Error: ' . $e->getMessage());
+            return response()->json(['message' => 'An unexpected error occurred while deleting.'], 500);
         }
     }
 }
