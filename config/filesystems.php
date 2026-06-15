@@ -48,16 +48,16 @@ return [
             'endpoint' => env('AWS_ENDPOINT'),
             'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
             // Bucket owner enforced (ACLs disabled) — NoAclS3Adapter skips ACL on PutObject
-            'throw' => false,
-            'report' => false,
+            'throw' => true,
+            'report' => true,
             'retain_visibility' => false,
         ] : [
             'driver' => 'local',
             'root' => storage_path('app/public'),
             'url' => rtrim(env('APP_URL', 'http://localhost'), '/').'/storage',
             'visibility' => 'public',
-            'throw' => false,
-            'report' => false,
+            'throw' => true,
+            'report' => true,
         ],
 
         's3' => [
