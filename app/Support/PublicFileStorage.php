@@ -15,11 +15,31 @@ class PublicFileStorage
     {
         $relativePath = ltrim($relativePath, '/');
 
+        if ($relativePath === '') {
+            throw new \RuntimeException('Cannot build a public path for an empty storage key.');
+        }
+
         if (config('filesystems.disks.public.driver') === 's3') {
             return self::disk()->url($relativePath);
         }
 
         return '/storage/'.$relativePath;
+    }
+
+    /**
+     * Store an uploaded file on the public disk and return the persisted path value.
+     *
+     * @param  \Illuminate\Http\UploadedFile  $file
+     */
+    public static function storeUploaded($file, string $directory): string
+    {
+        $relativePath = $file->store($directory, 'public');
+
+        if (! is_string($relativePath) || $relativePath === '') {
+            throw new \RuntimeException('File upload failed. Check storage configuration and permissions.');
+        }
+
+        return self::publicPath($relativePath);
     }
 
     /**

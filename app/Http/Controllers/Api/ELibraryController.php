@@ -69,53 +69,52 @@ class ELibraryController extends Controller
             $request->validate([
                 'title' => 'required|string|max:255',
                 'description' => 'required|string',
-                'files' => 'required|array|max:5', 
-                'files.*' => 'required|file|mimes:pdf|max:15360', 
+                'files' => 'required|array|max:5',
+                'files.*' => 'required|file|mimes:pdf|max:15360',
             ]);
-
-            $library = ELibrary::create([
-                'creator_id' => $request->user()->id,
-                'title' => $request->title,
-                'description' => $request->description,
-                'status' => 'pending', 
-            ]);
-
-            if ($request->hasFile('files')) {
-                foreach ($request->file('files') as $file) {
-                    $path = $file->store('elibrary_files', 'public');
-                    
-                    $library->files()->create([
-                        'owner_id' => $request->user()->id,
-                        'name' => $file->getClientOriginalName(),
-                        'path' => PublicFileStorage::publicPath($path),
-                        'file_extension' => $file->getClientOriginalExtension(),
-                        'file_size' => $file->getSize(),
-                    ]);
-                }
-            }
 
             $currentUser = $request->user();
             $teacherName = $currentUser->first_name . ' ' . $currentUser->last_name;
             $shortTitle = Str::limit($request->title, 30);
-            $admins = User::where('role', 'admin')->get();
 
-            foreach ($admins as $admin) {
-                DB::table('notifications')->insert([
-                    'id' => Str::uuid()->toString(),
-                    'user_id' => $admin->id,
-                    'description' => "Teacher {$teacherName} uploaded a new material for approval: '{$shortTitle}'",
-                    'link' => "/admin/e-libraries",
-                    'is_read' => false,
-                    'created_at' => now(),
-                    'updated_at' => now(),
+            DB::transaction(function () use ($request, $currentUser, $teacherName, $shortTitle) {
+                $library = ELibrary::create([
+                    'creator_id' => $currentUser->id,
+                    'title' => $request->title,
+                    'description' => $request->description,
+                    'status' => 'pending',
                 ]);
-            }
 
-            ActivityLog::create([
-                'user_id' => $currentUser->id,
-                'action' => 'Submitted E-Library Material',
-                'description' => "Uploaded a new material for approval: '{$shortTitle}'."
-            ]);
+                foreach ($request->file('files') as $file) {
+                    $library->files()->create([
+                        'owner_id' => $currentUser->id,
+                        'name' => $file->getClientOriginalName(),
+                        'path' => PublicFileStorage::storeUploaded($file, 'elibrary_files'),
+                        'file_extension' => $file->getClientOriginalExtension(),
+                        'file_size' => $file->getSize(),
+                    ]);
+                }
+
+                $admins = User::where('role', 'admin')->get();
+
+                foreach ($admins as $admin) {
+                    DB::table('notifications')->insert([
+                        'id' => Str::uuid()->toString(),
+                        'user_id' => $admin->id,
+                        'description' => "Teacher {$teacherName} uploaded a new material for approval: '{$shortTitle}'",
+                        'link' => '/admin/e-libraries',
+                        'is_read' => false,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+
+                ActivityLog::create([
+                    'user_id' => $currentUser->id,
+                    'action' => 'Submitted E-Library Material',
+                    'description' => "Uploaded a new material for approval: '{$shortTitle}'.",
+                ]);
+            });
 
             return response()->json(['message' => 'Uploaded to Global Library. Pending Admin Approval.'], 201);
 
@@ -155,18 +154,17 @@ class ELibraryController extends Controller
             if ($request->has('deleted_file_ids')) {
                 $filesToDelete = $library->files()->whereIn('id', $request->deleted_file_ids)->get();
                 foreach ($filesToDelete as $f) {
-                    PublicFileStorage::deleteStored($f->path);
+                    PublicFileStorage::deleteStored($f->getRawOriginal('path'));
                     $f->delete();
                 }
             }
 
             if ($request->hasFile('files')) {
                 foreach ($request->file('files') as $file) {
-                    $path = $file->store('elibrary_files', 'public');
                     $library->files()->create([
                         'owner_id' => $request->user()->id,
                         'name' => $file->getClientOriginalName(),
-                        'path' => PublicFileStorage::publicPath($path),
+                        'path' => PublicFileStorage::storeUploaded($file, 'elibrary_files'),
                         'file_extension' => $file->getClientOriginalExtension(),
                         'file_size' => $file->getSize(),
                     ]);
