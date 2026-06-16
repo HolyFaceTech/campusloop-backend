@@ -21,14 +21,19 @@ jobs:
           set -e
           COMPOSE="docker compose -f compose.prod.yaml --env-file compose.prod.env"
 
-          # Clear stale containers from interrupted deploys (avoids name conflicts)
-          $COMPOSE stop backend queue || true
-          $COMPOSE rm -f backend queue || true
-          for name in $(docker ps -a --format '{{.Names}}' | grep -E 'campusloop-prod-(backend|queue)' || true); do
+          # Remove stale backend/queue containers and free host port 8000
+          $COMPOSE stop backend queue 2>/dev/null || true
+          $COMPOSE rm -f backend queue 2>/dev/null || true
+          for name in $(docker ps -a --format '{{.Names}}' | grep -E 'campusloop-prod.*(backend|queue)' || true); do
             docker rm -f "$name" || true
           done
+          for cid in $(docker ps -aq); do
+            if docker port "$cid" 2>/dev/null | grep -q ':8000'; then
+              docker rm -f "$cid" || true
+            fi
+          done
 
-          $COMPOSE up -d --build --remove-orphans backend queue
+          $COMPOSE up -d --build --force-recreate --remove-orphans backend queue
 
       - name: Run migrations
         run: |
@@ -36,9 +41,13 @@ jobs:
 
       - name: Clear and rebuild caches
         run: |
+          set -e
+          COMPOSE="docker compose -f compose.prod.yaml --env-file compose.prod.env"
+
           # Stop queue worker to free RAM on small EC2 instances (exit 137 = OOM during cache)
-          docker compose -f compose.prod.yaml --env-file compose.prod.env stop queue || true
-          docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan config:clear
-          docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan config:cache
-          docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan route:cache
-          docker compose -f compose.prod.yaml --env-file compose.prod.env start queue
+          $COMPOSE stop queue || true
+          $COMPOSE exec -T backend php artisan config:clear
+          $COMPOSE exec -T backend php artisan config:cache
+          $COMPOSE exec -T backend php artisan route:cache
+          # Use up -d (not start) to avoid stale dependency container conflicts on port 8000
+          $COMPOSE up -d --no-recreate queue
