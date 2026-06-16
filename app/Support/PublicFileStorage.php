@@ -77,10 +77,14 @@ class PublicFileStorage
     }
 
     /**
-     * Generate a browser-safe URL for a stored object.
+     * Generate a browser-safe URL for viewing a stored object inline (not forced download).
      */
-    public static function createSignedUrl(string $relativePath, ?\DateTimeInterface $expiration = null): ?string
-    {
+    public static function createSignedUrl(
+        string $relativePath,
+        ?\DateTimeInterface $expiration = null,
+        ?string $displayName = null,
+        ?string $extension = null,
+    ): ?string {
         $relativePath = ltrim($relativePath, '/');
 
         if ($relativePath === '') {
@@ -92,9 +96,18 @@ class PublicFileStorage
         }
 
         $expiration ??= now()->addHours(2);
+        $inlineOptions = self::inlineViewOptions($relativePath, $displayName, $extension);
 
         try {
-            return self::disk()->temporaryUrl($relativePath, $expiration);
+            $temporaryUrl = self::disk()->temporaryUrl($relativePath, $expiration, $inlineOptions);
+
+            if ($temporaryUrl) {
+                return $temporaryUrl;
+            }
+
+            Log::warning('PublicFileStorage: temporaryUrl returned empty; trying presign.', [
+                'key' => $relativePath,
+            ]);
         } catch (\Throwable $exception) {
             Log::warning('PublicFileStorage: temporaryUrl failed, trying direct presign.', [
                 'key' => $relativePath,
@@ -103,7 +116,7 @@ class PublicFileStorage
         }
 
         try {
-            return self::presignS3Url($relativePath, $expiration);
+            return self::presignS3Url($relativePath, $expiration, $inlineOptions);
         } catch (\Throwable $exception) {
             Log::error('PublicFileStorage: presign failed.', [
                 'key' => $relativePath,
@@ -114,8 +127,58 @@ class PublicFileStorage
         }
     }
 
-    private static function presignS3Url(string $key, \DateTimeInterface $expiration): string
+    /**
+     * @return array<string, string>
+     */
+    private static function inlineViewOptions(
+        string $relativePath,
+        ?string $displayName = null,
+        ?string $extension = null,
+    ): array {
+        $filename = self::safeFilename($displayName ?: basename($relativePath));
+        $mimeType = self::mimeTypeForExtension($extension ?: pathinfo($relativePath, PATHINFO_EXTENSION));
+
+        return [
+            'ResponseContentDisposition' => 'inline; filename="'.$filename.'"',
+            'ResponseContentType' => $mimeType,
+        ];
+    }
+
+    private static function safeFilename(string $filename): string
     {
+        $filename = trim(str_replace(['"', "\r", "\n"], '', $filename));
+
+        return $filename !== '' ? $filename : 'file';
+    }
+
+    private static function mimeTypeForExtension(?string $extension): string
+    {
+        return match (strtolower((string) $extension)) {
+            'pdf' => 'application/pdf',
+            'jpg', 'jpeg' => 'image/jpeg',
+            'gif' => 'image/gif',
+            'png' => 'image/png',
+            'mp4' => 'video/mp4',
+            'mov' => 'video/quicktime',
+            'avi' => 'video/x-msvideo',
+            'doc' => 'application/msword',
+            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xls' => 'application/vnd.ms-excel',
+            'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'ppt' => 'application/vnd.ms-powerpoint',
+            'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            default => 'application/octet-stream',
+        };
+    }
+
+    /**
+     * @param  array<string, string>  $inlineOptions
+     */
+    private static function presignS3Url(
+        string $key,
+        \DateTimeInterface $expiration,
+        array $inlineOptions = [],
+    ): string {
         $config = config('filesystems.disks.public');
 
         $clientConfig = [
@@ -145,10 +208,10 @@ class PublicFileStorage
             $key = $root.'/'.$key;
         }
 
-        $command = $client->getCommand('GetObject', [
+        $command = $client->getCommand('GetObject', array_merge([
             'Bucket' => $config['bucket'],
             'Key' => $key,
-        ]);
+        ], $inlineOptions));
 
         $request = $client->createPresignedRequest($command, $expiration);
 
@@ -175,7 +238,12 @@ class PublicFileStorage
         }
 
         if (self::isUsingS3()) {
-            $signedUrl = self::createSignedUrl($relativePath);
+            $signedUrl = self::createSignedUrl(
+                $relativePath,
+                null,
+                basename($relativePath),
+                pathinfo($relativePath, PATHINFO_EXTENSION),
+            );
 
             return $signedUrl ?? '';
         }

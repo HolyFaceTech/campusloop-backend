@@ -12,7 +12,13 @@ class FileViewController extends Controller
     public function viewUrl(Request $request, string $id)
     {
         $file = File::findOrFail($id);
-        $url = PublicFileStorage::urlForResponse($file->getRawOriginal('path'));
+        $storedPath = $file->getRawOriginal('path');
+        $url = PublicFileStorage::createSignedUrl(
+            PublicFileStorage::relativePath($storedPath),
+            null,
+            $file->name,
+            $file->file_extension,
+        ) ?? PublicFileStorage::urlForResponse($storedPath);
 
         if ($url === null || $url === '') {
             return response()->json(['message' => 'Could not generate a view URL for this file.'], 404);
