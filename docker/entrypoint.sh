@@ -57,7 +57,6 @@ chmod -R 775 storage bootstrap/cache 2>/dev/null || true
 if [ "$is_production" = true ]; then
     php artisan config:cache
     php artisan route:cache
-    php artisan view:cache
 fi
 
 exec "$@"
