@@ -50,7 +50,7 @@ class AdminClassworkController extends Controller
 
             return response()->json($classworks, 200);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('AdminClassworkController index Error: ' . $e->getMessage() . ' on line ' . $e->getLine() . ' in ' . $e->getFile());
             return response()->json(['message' => 'An unexpected error occurred while fetching classworks.'], 500);
         }

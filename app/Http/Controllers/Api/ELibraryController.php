@@ -52,7 +52,7 @@ class ELibraryController extends Controller
 
             return response()->json($libraries, 200);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Fetch ELibrary Error: ' . $e->getMessage() . ' on line ' . $e->getLine() . ' in ' . $e->getFile());
             return response()->json(['message' => 'Failed to fetch library resources.'], 500);
         }

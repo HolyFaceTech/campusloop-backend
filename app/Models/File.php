@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Log;
 
 class File extends Model
 {
@@ -20,7 +21,18 @@ class File extends Model
     protected function path(): Attribute
     {
         return Attribute::make(
-            get: fn (?string $value) => PublicFileStorage::urlForResponse($value),
+            get: function (?string $value) {
+                try {
+                    return PublicFileStorage::urlForResponse($value);
+                } catch (\Throwable $exception) {
+                    Log::error('File path accessor failed.', [
+                        'stored_path' => $value,
+                        'error' => $exception->getMessage(),
+                    ]);
+
+                    return '';
+                }
+            },
         );
     }
 

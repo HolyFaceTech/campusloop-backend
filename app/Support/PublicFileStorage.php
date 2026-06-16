@@ -35,17 +35,7 @@ class PublicFileStorage
 
     public static function publicPath(string $relativePath): string
     {
-        $relativePath = ltrim($relativePath, '/');
-
-        if ($relativePath === '') {
-            throw new \RuntimeException('Cannot build a public path for an empty storage key.');
-        }
-
-        if (config('filesystems.disks.public.driver') === 's3') {
-            return self::disk()->url($relativePath);
-        }
-
-        return '/storage/'.$relativePath;
+        return self::dbPath($relativePath);
     }
 
     /**
@@ -209,8 +199,14 @@ class PublicFileStorage
 
         if (str_starts_with($storedPath, 'http://') || str_starts_with($storedPath, 'https://')) {
             $parsed = parse_url($storedPath, PHP_URL_PATH);
+            $path = ltrim((string) $parsed, '/');
+            $bucket = config('filesystems.disks.public.bucket');
 
-            return ltrim(str_replace('/storage/', '', (string) $parsed), '/');
+            if ($bucket && str_starts_with($path, $bucket.'/')) {
+                $path = substr($path, strlen($bucket) + 1);
+            }
+
+            return ltrim(str_replace('/storage/', '', $path), '/');
         }
 
         return ltrim(str_replace('/storage/', '', $storedPath), '/');

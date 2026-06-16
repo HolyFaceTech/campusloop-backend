@@ -277,7 +277,7 @@ class StudentClassroomController extends Controller
 
                     // storage path
                     foreach ($files as $file) {
-                        PublicFileStorage::deleteStored($file->path);
+                        PublicFileStorage::deleteStored($file->getRawOriginal('path'));
                         $file->delete();
                     }
 
@@ -314,18 +314,16 @@ class StudentClassroomController extends Controller
 
                 foreach ($request->file('files') as $uploadedFile) {
                     $filename = $uploadedFile->getClientOriginalName();
-                    $path = $uploadedFile->storeAs($destinationPath, time() . '_' . $filename, 'public');
-                    
-                    //storage path
+
                     File::create([
                         'id' => (string) Str::uuid(),
                         'owner_id' => $user->id,
                         'name' => $filename,
-                        'path' => PublicFileStorage::publicPath($path),
+                        'path' => PublicFileStorage::storeUploaded($uploadedFile, $destinationPath),
                         'file_extension' => $uploadedFile->getClientOriginalExtension(),
                         'file_size' => $uploadedFile->getSize(),
-                        'attachable_type' => 'classwork_submission', 
-                        'attachable_id' => $submissionId
+                        'attachable_type' => 'classwork_submission',
+                        'attachable_id' => $submissionId,
                     ]);
                 }
             }

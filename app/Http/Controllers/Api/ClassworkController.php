@@ -49,7 +49,7 @@ class ClassworkController extends Controller
                 
             return response()->json($classworks, 200);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Fetch Classworks Error: ' . $e->getMessage() . ' on line ' . $e->getLine() . ' in ' . $e->getFile());
             return response()->json(['message' => 'An unexpected error occurred while fetching classworks.'], 500);
         }
@@ -80,21 +80,18 @@ class ClassworkController extends Controller
                 $user = Auth::user();
                 $folderName = str_replace(' ', '_', strtolower($user->first_name . '_' . $user->last_name . '_' . $user->id));
                 $destinationPath = "users_files/{$folderName}/classworks";
+                $uploadedFiles = PublicFileStorage::normalizeUploadedFiles($request->file('files'));
 
-                foreach ($request->file('files') as $uploadedFile) {
-                    $originalName = $uploadedFile->getClientOriginalName();
-                    // System-generated hash para iwas File Name Exploits (Directory Traversal)
-                    $path = $uploadedFile->store($destinationPath, 'public');
-                    // storage path
+                foreach ($uploadedFiles as $uploadedFile) {
                     File::create([
                         'id' => (string) Str::uuid(),
                         'owner_id' => $user->id,
-                        'name' => $originalName,
-                        'path' => PublicFileStorage::publicPath($path),
+                        'name' => $uploadedFile->getClientOriginalName(),
+                        'path' => PublicFileStorage::storeUploaded($uploadedFile, $destinationPath),
                         'file_extension' => $uploadedFile->getClientOriginalExtension(),
                         'file_size' => $uploadedFile->getSize(),
                         'attachable_type' => Classwork::class,
-                        'attachable_id' => $classwork->id
+                        'attachable_id' => $classwork->id,
                     ]);
                 }
             }
@@ -185,7 +182,7 @@ class ClassworkController extends Controller
             if ($request->has('deleted_file_ids')) {
                 $filesToDelete = File::whereIn('id', $request->deleted_file_ids)->get();
                 foreach ($filesToDelete as $f) {
-                    PublicFileStorage::deleteStored($f->path);
+                    PublicFileStorage::deleteStored($f->getRawOriginal('path'));
                     $f->delete();
                 }
             }
@@ -194,21 +191,18 @@ class ClassworkController extends Controller
                 $user = Auth::user();
                 $folderName = str_replace(' ', '_', strtolower($user->first_name . '_' . $user->last_name . '_' . $user->id));
                 $destinationPath = "users_files/{$folderName}/classworks";
+                $uploadedFiles = PublicFileStorage::normalizeUploadedFiles($request->file('files'));
 
-                foreach ($request->file('files') as $uploadedFile) {
-                    $originalName = $uploadedFile->getClientOriginalName();
-                    // System-generated hash para safe filename
-                    $path = $uploadedFile->store($destinationPath, 'public');
-                    // storage path
+                foreach ($uploadedFiles as $uploadedFile) {
                     File::create([
                         'id' => (string) Str::uuid(),
                         'owner_id' => $user->id,
-                        'name' => $originalName,
-                        'path' => PublicFileStorage::publicPath($path),
+                        'name' => $uploadedFile->getClientOriginalName(),
+                        'path' => PublicFileStorage::storeUploaded($uploadedFile, $destinationPath),
                         'file_extension' => $uploadedFile->getClientOriginalExtension(),
                         'file_size' => $uploadedFile->getSize(),
                         'attachable_type' => Classwork::class,
-                        'attachable_id' => $classwork->id
+                        'attachable_id' => $classwork->id,
                     ]);
                 }
             }
