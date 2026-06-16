@@ -18,7 +18,17 @@ jobs:
 
       - name: Build and start backend services
         run: |
-          docker compose -f compose.prod.yaml --env-file compose.prod.env up -d --build backend queue
+          set -e
+          COMPOSE="docker compose -f compose.prod.yaml --env-file compose.prod.env"
+
+          # Clear stale containers from interrupted deploys (avoids name conflicts)
+          $COMPOSE stop backend queue || true
+          $COMPOSE rm -f backend queue || true
+          for name in $(docker ps -a --format '{{.Names}}' | grep -E 'campusloop-prod-(backend|queue)' || true); do
+            docker rm -f "$name" || true
+          done
+
+          $COMPOSE up -d --build --remove-orphans backend queue
 
       - name: Run migrations
         run: |
