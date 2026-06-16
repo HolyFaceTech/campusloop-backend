@@ -79,6 +79,22 @@ class PublicFileStorage
         return self::dbPath($relativePath);
     }
 
+    public static function isUsingS3(): bool
+    {
+        if (config('filesystems.disks.public.driver') === 's3') {
+            return true;
+        }
+
+        if (config('filesystems.default') === 's3') {
+            return true;
+        }
+
+        $bucket = config('filesystems.disks.public.bucket')
+            ?? config('filesystems.disks.s3.bucket');
+
+        return filled($bucket);
+    }
+
     /**
      * URL safe to open in the browser (signed URL for private S3 buckets).
      */
@@ -91,11 +107,24 @@ class PublicFileStorage
         $relativePath = self::relativePath($storedPath);
 
         if ($relativePath === '') {
-            return $storedPath;
+            Log::warning('PublicFileStorage: could not resolve storage key from path.', [
+                'stored_path' => $storedPath,
+            ]);
+
+            return '';
         }
 
-        if (config('filesystems.disks.public.driver') === 's3') {
-            return self::disk()->temporaryUrl($relativePath, now()->addHours(2));
+        if (self::isUsingS3()) {
+            try {
+                return self::disk()->temporaryUrl($relativePath, now()->addHours(2));
+            } catch (\Throwable $exception) {
+                Log::error('PublicFileStorage: failed to create signed URL.', [
+                    'key' => $relativePath,
+                    'error' => $exception->getMessage(),
+                ]);
+
+                return '';
+            }
         }
 
         if (str_starts_with($storedPath, 'http://') || str_starts_with($storedPath, 'https://')) {
