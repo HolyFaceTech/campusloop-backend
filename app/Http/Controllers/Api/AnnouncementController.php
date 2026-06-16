@@ -117,14 +117,20 @@ class AnnouncementController extends Controller
 
             // storage path
             if ($request->hasFile('files')) {
-                foreach ($request->file('files') as $file) {
-                    $path = $file->store('announcements', 'public');
+                $uploadedFiles = PublicFileStorage::normalizeUploadedFiles($request->file('files'));
+
+                foreach ($uploadedFiles as $file) {
+                    validator(
+                        ['upload' => $file],
+                        ['upload' => 'required|file|mimes:pdf,jpg,jpeg,gif,mp4,mov,avi|max:20480']
+                    )->validate();
+
                     $announcement->files()->create([
                         'owner_id' => $request->user()->id,
                         'name' => $file->getClientOriginalName(),
-                        'path' => PublicFileStorage::publicPath($path),
+                        'path' => PublicFileStorage::storeUploaded($file, 'announcements'),
                         'file_extension' => $file->getClientOriginalExtension(),
-                        'file_size' => $file->getSize()
+                        'file_size' => $file->getSize(),
                     ]);
                 }
             }
@@ -215,22 +221,27 @@ class AnnouncementController extends Controller
             if ($request->has('deleted_file_ids') && is_array($request->deleted_file_ids)) {
                 $filesToDelete = File::whereIn('id', $request->deleted_file_ids)->get();
                 foreach ($filesToDelete as $file) {
-                    // storage path
-                    PublicFileStorage::deleteStored($file->path);
-                    $file->delete(); 
+                    PublicFileStorage::deleteStored($file->getRawOriginal('path'));
+                    $file->delete();
                 }
             }
 
             // storage path
             if ($request->hasFile('files')) {
-                foreach ($request->file('files') as $file) {
-                    $path = $file->store('announcements', 'public');
+                $uploadedFiles = PublicFileStorage::normalizeUploadedFiles($request->file('files'));
+
+                foreach ($uploadedFiles as $file) {
+                    validator(
+                        ['upload' => $file],
+                        ['upload' => 'required|file|mimes:pdf,jpg,jpeg,gif,mp4,mov,avi|max:20480']
+                    )->validate();
+
                     $announcement->files()->create([
                         'owner_id' => $request->user()->id,
                         'name' => $file->getClientOriginalName(),
-                        'path' => PublicFileStorage::publicPath($path),
+                        'path' => PublicFileStorage::storeUploaded($file, 'announcements'),
                         'file_extension' => $file->getClientOriginalExtension(),
-                        'file_size' => $file->getSize()
+                        'file_size' => $file->getSize(),
                     ]);
                 }
             }
@@ -266,7 +277,7 @@ class AnnouncementController extends Controller
 
             // storage path
             foreach ($announcement->files as $file) {
-                PublicFileStorage::deleteStored($file->path);
+                PublicFileStorage::deleteStored($file->getRawOriginal('path'));
             }
 
             $announcement->delete(); 
