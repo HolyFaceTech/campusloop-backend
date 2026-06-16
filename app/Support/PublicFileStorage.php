@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use Aws\S3\S3Client;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
@@ -82,18 +83,86 @@ class PublicFileStorage
 
     public static function isUsingS3(): bool
     {
-        if (config('filesystems.disks.public.driver') === 's3') {
-            return true;
+        return config('filesystems.disks.public.driver') === 's3';
+    }
+
+    /**
+     * Generate a browser-safe URL for a stored object.
+     */
+    public static function createSignedUrl(string $relativePath, ?\DateTimeInterface $expiration = null): ?string
+    {
+        $relativePath = ltrim($relativePath, '/');
+
+        if ($relativePath === '') {
+            return null;
         }
 
-        if (config('filesystems.default') === 's3') {
-            return true;
+        if (! self::isUsingS3()) {
+            return self::urlForResponse($relativePath);
         }
 
-        $bucket = config('filesystems.disks.public.bucket')
-            ?? config('filesystems.disks.s3.bucket');
+        $expiration ??= now()->addHours(2);
 
-        return filled($bucket);
+        try {
+            return self::disk()->temporaryUrl($relativePath, $expiration);
+        } catch (\Throwable $exception) {
+            Log::warning('PublicFileStorage: temporaryUrl failed, trying direct presign.', [
+                'key' => $relativePath,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+
+        try {
+            return self::presignS3Url($relativePath, $expiration);
+        } catch (\Throwable $exception) {
+            Log::error('PublicFileStorage: presign failed.', [
+                'key' => $relativePath,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    private static function presignS3Url(string $key, \DateTimeInterface $expiration): string
+    {
+        $config = config('filesystems.disks.public');
+
+        $clientConfig = [
+            'version' => 'latest',
+            'region' => $config['region'],
+        ];
+
+        if (! empty($config['key']) && ! empty($config['secret'])) {
+            $clientConfig['credentials'] = [
+                'key' => $config['key'],
+                'secret' => $config['secret'],
+            ];
+        }
+
+        if (! empty($config['endpoint'])) {
+            $clientConfig['endpoint'] = $config['endpoint'];
+        }
+
+        if (isset($config['use_path_style_endpoint'])) {
+            $clientConfig['use_path_style_endpoint'] = $config['use_path_style_endpoint'];
+        }
+
+        $client = new S3Client($clientConfig);
+
+        $root = trim((string) ($config['root'] ?? ''), '/');
+        if ($root !== '') {
+            $key = $root.'/'.$key;
+        }
+
+        $command = $client->getCommand('GetObject', [
+            'Bucket' => $config['bucket'],
+            'Key' => $key,
+        ]);
+
+        $request = $client->createPresignedRequest($command, $expiration);
+
+        return (string) $request->getUri();
     }
 
     /**
@@ -116,16 +185,9 @@ class PublicFileStorage
         }
 
         if (self::isUsingS3()) {
-            try {
-                return self::disk()->temporaryUrl($relativePath, now()->addHours(2));
-            } catch (\Throwable $exception) {
-                Log::error('PublicFileStorage: failed to create signed URL.', [
-                    'key' => $relativePath,
-                    'error' => $exception->getMessage(),
-                ]);
+            $signedUrl = self::createSignedUrl($relativePath);
 
-                return '';
-            }
+            return $signedUrl ?? '';
         }
 
         if (str_starts_with($storedPath, 'http://') || str_starts_with($storedPath, 'https://')) {

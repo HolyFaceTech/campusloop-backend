@@ -26,6 +26,7 @@ use App\Http\Controllers\Api\AdminNotificationController;
 use App\Http\Controllers\Api\AdminDashboardController;
 use App\Http\Controllers\Api\AdminRecycleBinController;
 use App\Http\Controllers\Api\ActivityLogController;
+use App\Http\Controllers\Api\FileViewController;
 
 // Teacher
 use App\Http\Controllers\Api\ClassroomController;
@@ -104,6 +105,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/announcements/bulk-delete', [AnnouncementController::class, 'bulkDelete']);
     Route::put('/announcements/{id}', [AnnouncementController::class, 'update']);
     Route::delete('/announcements/{id}', [AnnouncementController::class, 'destroy']);
+    Route::get('/files/{id}/view-url', [FileViewController::class, 'viewUrl']);
     Route::post('/admin/announcements/{id}/comments', [AnnouncementController::class, 'postComment']);
     Route::put('/admin/announcements/comments/{id}', [AnnouncementController::class, 'updateComment']);
     Route::delete('/admin/announcements/comments/{id}', [AnnouncementController::class, 'deleteComment']);
