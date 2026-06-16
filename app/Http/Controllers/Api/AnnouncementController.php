@@ -82,7 +82,7 @@ class AnnouncementController extends Controller
             
             return response()->json($query->paginate($entries), 200);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('AnnouncementController index Error: ' . $e->getMessage() . ' on line ' . $e->getLine() . ' in ' . $e->getFile());
             return response()->json(['message' => 'An unexpected error occurred while fetching announcements.'], 500);
         }
