@@ -26,6 +26,9 @@ jobs:
 
       - name: Clear and rebuild caches
         run: |
+          # Stop queue worker to free RAM on small EC2 instances (exit 137 = OOM during cache)
+          docker compose -f compose.prod.yaml --env-file compose.prod.env stop queue || true
+          docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan config:clear
           docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan config:cache
           docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan route:cache
-          docker compose -f compose.prod.yaml --env-file compose.prod.env exec -T backend php artisan view:cache
+          docker compose -f compose.prod.yaml --env-file compose.prod.env start queue
