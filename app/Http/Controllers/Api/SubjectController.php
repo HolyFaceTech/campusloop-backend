@@ -45,6 +45,11 @@ class SubjectController extends Controller
             }
 
             $query->orderBy('created_at', 'desc');
+
+            if ($request->has('all') && $request->all == 'true') {
+                return response()->json(['data' => $query->get()], 200);
+            }
+
             $entries = $request->has('entries') ? (int) $request->entries : 10;
             
             return response()->json($query->paginate($entries), 200);
