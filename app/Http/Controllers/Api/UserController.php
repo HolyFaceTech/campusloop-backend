@@ -388,11 +388,17 @@ class UserController extends Controller
 
                 try {
                     $strandId = null;
-                    $csvStrandName = $row['strand'] ?? $row['strand_name'] ?? null;
+                    $csvStrandName = $row['strand_id'] ?? $row['strand_name'] ?? $row['strand'] ?? null;
+                    
                     if (!empty($csvStrandName)) {
                         $strand = Strand::where('name', 'LIKE', $csvStrandName)->first();
+                        
                         if ($strand) {
                             $strandId = $strand->id;
+                        } else {
+                            DB::rollBack();
+                            $skippedCount++;
+                            continue;
                         }
                     }
 
