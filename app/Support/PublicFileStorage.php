@@ -84,6 +84,7 @@ class PublicFileStorage
         ?\DateTimeInterface $expiration = null,
         ?string $displayName = null,
         ?string $extension = null,
+        string $disposition = 'inline',
     ): ?string {
         $relativePath = ltrim($relativePath, '/');
 
@@ -96,7 +97,7 @@ class PublicFileStorage
         }
 
         $expiration ??= now()->addHours(2);
-        $inlineOptions = self::inlineViewOptions($relativePath, $displayName, $extension);
+        $inlineOptions = self::viewOptions($relativePath, $displayName, $extension, $disposition);
 
         try {
             $temporaryUrl = self::disk()->temporaryUrl($relativePath, $expiration, $inlineOptions);
@@ -130,16 +131,18 @@ class PublicFileStorage
     /**
      * @return array<string, string>
      */
-    private static function inlineViewOptions(
+    private static function viewOptions(
         string $relativePath,
         ?string $displayName = null,
         ?string $extension = null,
+        string $disposition = 'inline',
     ): array {
         $filename = self::safeFilename($displayName ?: basename($relativePath));
         $mimeType = self::mimeTypeForExtension($extension ?: pathinfo($relativePath, PATHINFO_EXTENSION));
+        $disposition = $disposition === 'attachment' ? 'attachment' : 'inline';
 
         return [
-            'ResponseContentDisposition' => 'inline; filename="'.$filename.'"',
+            'ResponseContentDisposition' => $disposition.'; filename="'.$filename.'"',
             'ResponseContentType' => $mimeType,
         ];
     }

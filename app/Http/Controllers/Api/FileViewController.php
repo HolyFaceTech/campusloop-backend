@@ -13,11 +13,13 @@ class FileViewController extends Controller
     {
         $file = File::findOrFail($id);
         $storedPath = $file->getRawOriginal('path');
+        $disposition = $request->query('disposition') === 'attachment' ? 'attachment' : 'inline';
         $url = PublicFileStorage::createSignedUrl(
             PublicFileStorage::relativePath($storedPath),
             null,
             $file->name,
             $file->file_extension,
+            $disposition,
         ) ?? PublicFileStorage::urlForResponse($storedPath);
 
         if ($url === null || $url === '') {
