@@ -241,7 +241,7 @@ class StudentClassroomController extends Controller
         }
 
         $request->validate([
-            'files' => 'nullable|array|max:5', 
+            'files' => 'nullable|array|max:10', 
             'files.*' => 'file|max:51200|mimes:pdf,doc,docx,xls,xlsx,csv,ppt,pptx,png,jpg,jpeg,gif,mp4,avi,mov'
         ]);
 

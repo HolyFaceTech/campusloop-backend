@@ -24,6 +24,90 @@ class UserController extends Controller
         return $request->user() && $request->user()->role === 'admin';
     }
 
+    private function normalizeCsvHeader(array $header): array
+    {
+        return array_map(function ($col) {
+            $col = preg_replace('/[\xef\xbb\xbf]/', '', (string) $col);
+            $col = strtolower(trim($col));
+            $col = preg_replace('/\s+/', '_', $col);
+
+            return $col;
+        }, $header);
+    }
+
+    private function resolveStrandFromCsvValue(?string $value): ?string
+    {
+        $value = trim((string) ($value ?? ''));
+        if ($value === '') {
+            return null;
+        }
+
+        $strand = Strand::find($value);
+        if ($strand) {
+            return $strand->id;
+        }
+
+        $strand = Strand::whereRaw('LOWER(name) = ?', [strtolower($value)])->first();
+        if ($strand) {
+            return $strand->id;
+        }
+
+        $strand = Strand::where('name', 'LIKE', '%' . $value . '%')->first();
+        if ($strand) {
+            return $strand->id;
+        }
+
+        return null;
+    }
+
+    private function csvStrandValue(array $row): ?string
+    {
+        foreach (['strand_id', 'strand_name', 'strand', 'academic_strand', 'strand_code'] as $key) {
+            if (!empty($row[$key])) {
+                return trim((string) $row[$key]);
+            }
+        }
+
+        return null;
+    }
+
+    private function ensureUserFolder(User $user): void
+    {
+        try {
+            $folderName = Str::slug($user->first_name . '-' . $user->last_name . '-' . $user->id);
+            $path = "users_files/{$folderName}";
+
+            if (!Storage::disk('public')->exists($path)) {
+                Storage::disk('public')->makeDirectory($path);
+            }
+        } catch (\Exception $e) {
+            Log::warning('UserController ensureUserFolder: ' . $e->getMessage());
+        }
+    }
+
+    private function renameUserFolder(User $originalUser, User $user): void
+    {
+        try {
+            $oldFolderName = Str::slug($originalUser->first_name . '-' . $originalUser->last_name . '-' . $originalUser->id);
+            $newFolderName = Str::slug($user->first_name . '-' . $user->last_name . '-' . $user->id);
+
+            if ($oldFolderName === $newFolderName) {
+                return;
+            }
+
+            $oldPath = "users_files/{$oldFolderName}";
+            $newPath = "users_files/{$newFolderName}";
+
+            if (Storage::disk('public')->exists($oldPath)) {
+                Storage::disk('public')->move($oldPath, $newPath);
+            } elseif (!Storage::disk('public')->exists($newPath)) {
+                Storage::disk('public')->makeDirectory($newPath);
+            }
+        } catch (\Exception $e) {
+            Log::warning('UserController renameUserFolder: ' . $e->getMessage());
+        }
+    }
+
     // view all users
     public function index(Request $request)
     {
@@ -89,9 +173,7 @@ class UserController extends Controller
             $validated['password'] = Hash::make($rawPassword);
             $validated['email_verified_at'] = null; 
             $user = User::create($validated);
-            // creating user folder
-            $folderName = Str::slug($user->first_name . '-' . $user->last_name . '-' . $user->id);
-            Storage::disk('public')->makeDirectory("users_files/{$folderName}");
+            $this->ensureUserFolder($user);
 
             ActivityLog::create([
                 'user_id' => $request->user()->id,
@@ -176,16 +258,8 @@ class UserController extends Controller
                 ]);
             }
 
-            // FOLDER RENAME
             if (isset($dirtyAttributes['first_name']) || isset($dirtyAttributes['last_name'])) {
-                $oldFolderName = Str::slug($originalUser->first_name . '-' . $originalUser->last_name . '-' . $originalUser->id);
-                $newFolderName = Str::slug($user->first_name . '-' . $user->last_name . '-' . $user->id);
-
-                if (Storage::disk('public')->exists("users_files/{$oldFolderName}")) {
-                    Storage::disk('public')->move("users_files/{$oldFolderName}", "users_files/{$newFolderName}");
-                } else {
-                    Storage::disk('public')->makeDirectory("users_files/{$newFolderName}");
-                }
+                $this->renameUserFolder($originalUser, $user);
             }
 
             $labels = [
@@ -208,8 +282,8 @@ class UserController extends Controller
                     $newVal = $newValue;
 
                     if ($key === 'strand_id') {
-                        $oldValue = $oldValue ? Strand::find($oldValue)->name ?? 'None' : 'None';
-                        $newVal   = $newVal ? Strand::find($newVal)->name ?? 'None' : 'None';
+                        $oldValue = $oldValue ? (Strand::find($oldValue)?->name ?? 'None') : 'None';
+                        $newVal = $newVal ? (Strand::find($newVal)?->name ?? 'None') : 'None';
                     }
 
                     $changedFields[$labels[$key]] = [
@@ -226,6 +300,8 @@ class UserController extends Controller
                 ];
             }
 
+            DB::commit();
+
             if (count($changedFields) > 0) {
                 dispatch(function () use ($user, $changedFields) {
                     Mail::send('emails.user_updated', [
@@ -238,7 +314,6 @@ class UserController extends Controller
                 });
             }
 
-            DB::commit();
             return response()->json(['message' => 'User updated successfully!'], 200);
 
         } catch (\Exception $e) {
@@ -342,9 +417,7 @@ class UserController extends Controller
                 return response()->json(['message' => 'The CSV file is empty or cannot be read.'], 400);
             }
 
-            $header[0] = preg_replace('/[\xef\xbb\xbf]/', '', $header[0]);
-            $header = array_map('trim', $header);
-            $header = array_map('strtolower', $header);
+            $header = $this->normalizeCsvHeader($header);
             $successCount = 0;
             $skippedCount = 0;
 
@@ -387,19 +460,22 @@ class UserController extends Controller
                 DB::beginTransaction();
 
                 try {
+                    $role = strtolower($row['role'] ?? 'student');
+                    $csvStrandValue = $this->csvStrandValue($row);
                     $strandId = null;
-                    $csvStrandName = $row['strand_id'] ?? $row['strand_name'] ?? $row['strand'] ?? null;
-                    
-                    if (!empty($csvStrandName)) {
-                        $strand = Strand::where('name', 'LIKE', $csvStrandName)->first();
-                        
-                        if ($strand) {
-                            $strandId = $strand->id;
-                        } else {
+
+                    if ($csvStrandValue !== null) {
+                        $strandId = $this->resolveStrandFromCsvValue($csvStrandValue);
+
+                        if (!$strandId) {
                             DB::rollBack();
                             $skippedCount++;
                             continue;
                         }
+                    } elseif ($role === 'student' && !empty($row['lrn'])) {
+                        DB::rollBack();
+                        $skippedCount++;
+                        continue;
                     }
 
                     $rawPassword = Str::random(12);
@@ -411,15 +487,13 @@ class UserController extends Controller
                         'birthday'   => !empty($row['birthday']) ? date('Y-m-d', strtotime($row['birthday'])) : '2000-01-01',
                         'email'      => $row['email'],
                         'password'   => Hash::make($rawPassword),
-                        'role'       => strtolower($row['role'] ?? 'student'),
+                        'role'       => $role,
                         'status'     => 'inactive',
-                        'lrn'        => $row['lrn'] ?? null,
-                        'strand_id'  => $strandId,
+                        'lrn'        => $role === 'student' ? ($row['lrn'] ?? null) : null,
+                        'strand_id'  => $role === 'student' ? $strandId : null,
                     ]);
 
-                    // creating folder users
-                    $folderName = Str::slug($user->first_name . '-' . $user->last_name . '-' . $user->id);
-                    Storage::disk('public')->makeDirectory("users_files/{$folderName}");
+                    $this->ensureUserFolder($user);
 
                     $expires = now()->addHour()->timestamp;
                     $hash = hash_hmac('sha256', $user->email . $expires, config('app.key'));
