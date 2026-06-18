@@ -73,8 +73,27 @@ class ClassroomStudentController extends Controller
         ]);
         
         try {
-            $classroom = Classroom::with('subject')->where('creator_id', $request->user()->id)->findOrFail($classroomId);
             DB::beginTransaction();
+
+            $classroom = Classroom::with('subject')
+                ->where('creator_id', $request->user()->id)
+                ->lockForUpdate()
+                ->findOrFail($classroomId);
+
+            $currentApprovedCount = DB::table('classroom_student')
+                ->where('classroom_id', $classroomId)
+                ->where('status', 'approved')
+                ->count();
+
+            $requestedCount = count($request->student_ids);
+            $availableSlots = $classroom->capacity - $currentApprovedCount; 
+
+            if ($requestedCount > $availableSlots) {
+                DB::rollBack();
+                return response()->json([
+                    'message' => "Approval failed. The classroom only has {$availableSlots} slot(s) remaining, but you are trying to approve {$requestedCount} student(s)."
+                ], 422);
+            }
 
             foreach ($request->student_ids as $studentId) {
                 $classroom->students()->updateExistingPivot($studentId, ['status' => 'approved']);
