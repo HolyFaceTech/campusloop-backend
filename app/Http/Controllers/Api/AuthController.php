@@ -119,11 +119,20 @@ class AuthController extends Controller
                 ['token' => $token, 'created_at' => Carbon::now()]
             );
 
-            $resetLink = env('FRONTEND_URL') . '/reset-password?token=' . $token . '&email=' . urlencode($request->email);
+            $frontendUrl = rtrim((string) env('FRONTEND_URL', ''), '/');
+            $resetLink = $frontendUrl.'/reset-password?token='.$token.'&email='.urlencode($request->email);
 
-            Mail::send('emails.reset_password', ['resetLink' => $resetLink, 'user' => $user], function($message) use($request){
-                $message->to($request->email);
-                $message->subject('Reset Your CampusLoop Password');
+            dispatch(function () use ($resetLink, $user, $request) {
+                try {
+                    Mail::send('emails.reset_password', ['resetLink' => $resetLink, 'user' => $user], function ($message) use ($request) {
+                        $message->to($request->email);
+                        $message->subject('Reset Your CampusLoop Password');
+                    });
+                } catch (\Throwable $mailException) {
+                    Log::error('AuthController forgotPassword mail failed: '.$mailException->getMessage(), [
+                        'email' => $request->email,
+                    ]);
+                }
             });
 
             ActivityLog::create([
@@ -226,12 +235,19 @@ class AuthController extends Controller
             // Generate Secure Hash kasama ang expiration
             $hash = hash_hmac('sha256', $user->email . $expires, config('app.key'));
             // Buuin ang Verification Link pabalik sa React Frontend (Verify Page)
-            $verifyLink = env('FRONTEND_URL') . '/verify?id=' . $user->id . '&hash=' . $hash . '&expires=' . $expires . '&email=' . urlencode($user->email);
+            $verifyLink = rtrim((string) env('FRONTEND_URL', ''), '/').'/verify?id='.$user->id.'&hash='.$hash.'&expires='.$expires.'&email='.urlencode($user->email);
 
-            // I-send ang Email gamit ang Laravel Mail
-            Mail::send('emails.verify_email', ['verifyLink' => $verifyLink, 'user' => $user], function($message) use($user){
-                $message->to($user->email);
-                $message->subject('Verify Your CampusLoop Account');
+            dispatch(function () use ($verifyLink, $user) {
+                try {
+                    Mail::send('emails.verify_email', ['verifyLink' => $verifyLink, 'user' => $user], function ($message) use ($user) {
+                        $message->to($user->email);
+                        $message->subject('Verify Your CampusLoop Account');
+                    });
+                } catch (\Throwable $mailException) {
+                    Log::error('AuthController resendVerificationEmail mail failed: '.$mailException->getMessage(), [
+                        'email' => $user->email,
+                    ]);
+                }
             });
 
             ActivityLog::create([

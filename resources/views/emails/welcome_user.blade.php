@@ -9,12 +9,7 @@
     <div class="email-wrapper">
         <div class="email-container">
             
-            <div class="email-header">
-                <img src="{{ $message->embed(public_path('images/logo.png')) }}" alt="CampusLoop Logo" style="max-height: 50px; display: block; margin: 0 auto;">
-                <div style="margin-top: 15px;">
-                    CAMPUSLOOP
-                </div>
-            </div>
+            @include('emails.partials.header')
 
             <div class="email-body">
                 <h2>Welcome to CampusLoop!</h2>
