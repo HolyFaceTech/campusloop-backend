@@ -121,29 +121,34 @@ class AuthController extends Controller
 
             $frontendUrl = rtrim((string) env('FRONTEND_URL', ''), '/');
             $resetLink = $frontendUrl.'/reset-password?token='.$token.'&email='.urlencode($request->email);
+            $recipientEmail = $request->email;
 
-            dispatch(function () use ($resetLink, $user, $request) {
-                try {
-                    Mail::send('emails.reset_password', ['resetLink' => $resetLink, 'user' => $user], function ($message) use ($request) {
-                        $message->to($request->email);
-                        $message->subject('Reset Your CampusLoop Password');
-                    });
-                } catch (\Throwable $mailException) {
-                    Log::error('AuthController forgotPassword mail failed: '.$mailException->getMessage(), [
-                        'email' => $request->email,
-                    ]);
-                }
-            });
+            try {
+                Mail::send('emails.reset_password', ['resetLink' => $resetLink, 'user' => $user], function ($message) use ($recipientEmail) {
+                    $message->to($recipientEmail);
+                    $message->subject('Reset Your CampusLoop Password');
+                });
+            } catch (\Throwable $mailException) {
+                Log::error('AuthController forgotPassword mail failed: '.$mailException->getMessage(), [
+                    'email' => $recipientEmail,
+                ]);
+            }
 
-            ActivityLog::create([
-                'user_id' => $user->id,
-                'action' => 'Requested Password Reset',
-                'description' => 'Requested a secure link to reset account password.'
-            ]);
+            try {
+                ActivityLog::create([
+                    'user_id' => $user->id,
+                    'action' => 'Requested Password Reset',
+                    'description' => 'Requested a secure link to reset account password.',
+                ]);
+            } catch (\Throwable $logException) {
+                Log::warning('AuthController forgotPassword activity log failed: '.$logException->getMessage(), [
+                    'user_id' => $user->id,
+                ]);
+            }
 
             return response()->json(['message' => 'If your email is registered, you will receive a secure reset link shortly.'], 200);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('AuthController forgotPassword Error: ' . $e->getMessage() . ' on line ' . $e->getLine() . ' in ' . $e->getFile());
             return response()->json(['message' => 'An unexpected error occurred while sending the reset link.'], 500);
         }
@@ -237,28 +242,32 @@ class AuthController extends Controller
             // Buuin ang Verification Link pabalik sa React Frontend (Verify Page)
             $verifyLink = rtrim((string) env('FRONTEND_URL', ''), '/').'/verify?id='.$user->id.'&hash='.$hash.'&expires='.$expires.'&email='.urlencode($user->email);
 
-            dispatch(function () use ($verifyLink, $user) {
-                try {
-                    Mail::send('emails.verify_email', ['verifyLink' => $verifyLink, 'user' => $user], function ($message) use ($user) {
-                        $message->to($user->email);
-                        $message->subject('Verify Your CampusLoop Account');
-                    });
-                } catch (\Throwable $mailException) {
-                    Log::error('AuthController resendVerificationEmail mail failed: '.$mailException->getMessage(), [
-                        'email' => $user->email,
-                    ]);
-                }
-            });
+            try {
+                Mail::send('emails.verify_email', ['verifyLink' => $verifyLink, 'user' => $user], function ($message) use ($user) {
+                    $message->to($user->email);
+                    $message->subject('Verify Your CampusLoop Account');
+                });
+            } catch (\Throwable $mailException) {
+                Log::error('AuthController resendVerificationEmail mail failed: '.$mailException->getMessage(), [
+                    'email' => $user->email,
+                ]);
+            }
 
-            ActivityLog::create([
-                'user_id' => $user->id,
-                'action' => 'Requested Verification Email',
-                'description' => 'Requested a new email verification link.'
-            ]);
+            try {
+                ActivityLog::create([
+                    'user_id' => $user->id,
+                    'action' => 'Requested Verification Email',
+                    'description' => 'Requested a new email verification link.',
+                ]);
+            } catch (\Throwable $logException) {
+                Log::warning('AuthController resendVerificationEmail activity log failed: '.$logException->getMessage(), [
+                    'user_id' => $user->id,
+                ]);
+            }
 
             return response()->json(['message' => 'Verification email sent successfully.'], 200);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('AuthController resendVerificationEmail Error: ' . $e->getMessage() . ' on line ' . $e->getLine() . ' in ' . $e->getFile());
             return response()->json(['message' => 'An unexpected error occurred while sending the verification email.'], 500);
         }
