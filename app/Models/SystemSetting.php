@@ -12,7 +12,7 @@ class SystemSetting extends Model
 
     protected $fillable = [
         'school_year', 
-        'semester', 
+        'term', 
         'maintenance_mode', 
         'is_active', 
         'maintenance_started_at'

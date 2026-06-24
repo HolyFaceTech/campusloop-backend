@@ -56,16 +56,16 @@ class SystemSettingController extends Controller
         try {
             $validated = $request->validate([
                 'school_year' => ['required', 'string', 'regex:/^\d{4}-\d{4}$/'],
-                'semester' => ['required', 'in:1st,2nd'] 
+                'term' => ['required', 'in:1st,2nd,3rd']
             ], [
-                'semester.in' => 'Invalid semester selected. It must be either 1st or 2nd.'
+                'term.in' => 'Invalid term selected. It must be 1st, 2nd, or 3rd.'
             ]);
 
             SystemSetting::where('is_active', true)->update(['is_active' => false]);
 
             $newSetting = SystemSetting::create([
                 'school_year' => $validated['school_year'],
-                'semester' => $validated['semester'],
+                'term' => $validated['term'],
                 'maintenance_mode' => false,
                 'is_active' => true
             ]);
@@ -73,7 +73,7 @@ class SystemSettingController extends Controller
             ActivityLog::create([
                 'user_id' => $request->user()->id,
                 'action' => 'Updated System Settings',
-                'description' => "Set the active School Year to {$newSetting->school_year} and Semester to {$newSetting->semester} Semester."
+                'description' => "Set the active School Year to {$newSetting->school_year} and Term to {$newSetting->term} Term."
             ]);
 
             Cache::forget('active_system_setting'); 
@@ -105,7 +105,7 @@ class SystemSettingController extends Controller
                 ActivityLog::create([
                     'user_id' => $request->user()->id,
                     'action' => 'Reset System Settings',
-                    'description' => "Cleared the active School Year and Semester configurations."
+                    'description' => "Cleared the active School Year and Term configurations."
                 ]);
             }
 

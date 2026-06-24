@@ -40,8 +40,8 @@ class SubjectController extends Controller
                 $query->where('grade_level', $request->filterGrade);
             }
 
-            if ($request->has('filterSemester') && $request->filterSemester !== 'all') {
-                $query->where('semester', $request->filterSemester);
+            if ($request->has('filterTerm') && $request->filterTerm !== 'all') {
+                $query->where('term', $request->filterTerm);
             }
 
             $query->orderBy('created_at', 'desc');
@@ -72,7 +72,7 @@ class SubjectController extends Controller
             'description' => 'required|string',
             'strand_id' => 'required|exists:strands,id',
             'grade_level' => 'required|in:11,12',
-            'semester' => 'required|in:1st,2nd'  
+            'term' => 'required|in:1st,2nd,3rd' 
         ]);
 
         try {
@@ -108,7 +108,7 @@ class SubjectController extends Controller
             'description' => 'required|string',
             'strand_id' => 'required|exists:strands,id',
             'grade_level' => 'required|in:11,12',
-            'semester' => 'required|in:1st,2nd'
+            'term' => 'required|in:1st,2nd,3rd'
         ]);
 
         try {
@@ -243,7 +243,7 @@ class SubjectController extends Controller
                 }, $row);
 
                 // Required Columns Check
-                if (empty($row['code']) || empty($row['description']) || empty($row['strand']) || empty($row['grade_level']) || empty($row['semester'])) {
+                if (empty($row['code']) || empty($row['description']) || empty($row['strand']) || empty($row['grade_level']) || empty($row['term'])) {
                     $skippedCount++;
                     continue;
                 }
@@ -266,12 +266,14 @@ class SubjectController extends Controller
                         continue;
                     }
 
-                    // SEMESTER VALIDATION 
-                    $rawSem = strtolower($row['semester']);
-                    $validSem = '1st'; // Default fallback
-                    if (str_contains($rawSem, '2') || str_contains($rawSem, 'nd')) {
-                        $validSem = '2nd';
-                    }
+                    // TERM VALIDATION 
+                    $rawTerm = strtolower($row['term']);
+                    $validTerm = '1st'; // Default fallback
+                        if (str_contains($rawTerm, '2') || str_contains($rawTerm, 'nd')) {
+                            $validTerm = '2nd';
+                        } elseif (str_contains($rawTerm, '3') || str_contains($rawTerm, 'rd')) {
+                            $validTerm = '3rd';
+                        }
 
                     // GRADE LEVEL VALIDATION
                     $rawGrade = strtolower($row['grade_level']);
@@ -285,7 +287,7 @@ class SubjectController extends Controller
                         'description' => $row['description'],
                         'strand_id'   => $strand->id,
                         'grade_level' => $validGrade,
-                        'semester'    => $validSem,
+                        'term'    => $validTerm,
                     ]);
 
                     DB::commit(); 

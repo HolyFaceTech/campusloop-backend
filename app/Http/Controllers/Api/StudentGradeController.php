@@ -59,19 +59,18 @@ class StudentGradeController extends Controller
             }
 
             if ($sem !== 'all') {
-                if (in_array($sem, ['1st', '2nd'])) {
+                if (in_array($sem, ['1st', '2nd', '3rd'])) {
                     $query->where(function($q) use ($sem) {
-                        $q->where('semester', $sem)
-                          ->orWhere('semester', "{$sem} Sem")
-                          ->orWhere('semester', "{$sem} Semester");
+                        $q->where('term', $sem)
+                          ->orWhere('term', "{$sem} Term");
                     });
                 } else {
-                    $query->where('semester', $sem);
+                    $query->where('term', $sem);
                 }
             }
 
             $grades = $query->orderBy('school_year', 'desc')
-                            ->orderBy('semester', 'desc')
+                            ->orderBy('term', 'desc')
                             ->paginate($entries);
 
             $grades->getCollection()->transform(function ($finalGrade) {
@@ -79,7 +78,7 @@ class StudentGradeController extends Controller
                     'id' => $finalGrade->id,
                     'grade' => $finalGrade->grade,
                     'school_year' => $finalGrade->school_year ?? 'N/A',
-                    'semester' => $finalGrade->semester ?? 'N/A',
+                    'term' => $finalGrade->term ?? 'N/A',
                     'subject_code' => $finalGrade->subject->code ?? 'N/A',
                     'subject_description' => $finalGrade->subject->description ?? 'N/A',
                     'date_locked' => $finalGrade->updated_at,
