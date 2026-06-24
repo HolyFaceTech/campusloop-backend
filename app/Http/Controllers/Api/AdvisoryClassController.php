@@ -323,7 +323,7 @@ class AdvisoryClassController extends Controller
             $search = $request->input('search');
             $entries = $request->input('entries', 10);
             $syFilter = $request->input('syFilter', 'all');
-            $semFilter = $request->input('semFilter', 'all');
+            $termFilter = $request->input('termFilter', 'all');
 
             $query = DB::table('final_grades')
                 ->join('subjects', 'final_grades.subject_id', '=', 'subjects.id')
@@ -341,8 +341,8 @@ class AdvisoryClassController extends Controller
                 $query->where('final_grades.school_year', $advisory->school_year);
             }
 
-            if ($semFilter !== 'all') {
-                $query->where('final_grades.semester', $semFilter);
+            if ($termFilter !== 'all') {
+                $query->where('final_grades.term', $termFilter);
             }
 
             if (!empty($search)) {
@@ -395,7 +395,7 @@ class AdvisoryClassController extends Controller
         try {
             $request->validate([
                 'subject_id' => 'required',
-                'semester' => 'required',
+                'term' => 'required',
                 'grade' => ['required', 'numeric', 'between:1,100', 'regex:/^\d{1,3}(\.\d{1,2})?$/'],
             ]);
 
@@ -408,7 +408,7 @@ class AdvisoryClassController extends Controller
                 'teacher_id' => $request->user()->id,
                 'subject_id' => $request->subject_id,
                 'school_year' => $advisory->school_year,
-                'semester' => $request->semester,
+                'term' => $request->term,
                 'grade' => $request->grade,
                 'status' => 'pending',
                 'created_at' => now(),
@@ -460,7 +460,7 @@ class AdvisoryClassController extends Controller
         try {
             $request->validate([
                 'subject_id' => 'required',
-                'semester' => 'required',
+                'term' => 'required',
                 'grade' => ['required', 'numeric', 'between:1,100', 'regex:/^\d{1,3}(\.\d{1,2})?$/'],
             ]);
 
@@ -473,7 +473,7 @@ class AdvisoryClassController extends Controller
                 ->whereNull('deleted_at')
                 ->update([
                 'subject_id' => $request->subject_id,
-                'semester' => $request->semester,
+                'term' => $request->term,
                 'grade' => $request->grade,
                 'status' => 'pending',
                 'updated_at' => now()

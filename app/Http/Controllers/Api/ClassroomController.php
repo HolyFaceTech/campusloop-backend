@@ -96,7 +96,7 @@ class ClassroomController extends Controller
                 'color_bg' => $validated['color_bg'],
                 'code' => $code,
                 'school_year' => $activeSetting ? $activeSetting->school_year : 'Not Set',
-                'semester' => $activeSetting ? $activeSetting->semester : '1st',
+                'term' => $activeSetting ? $activeSetting->term : '1st',
             ]);
 
             $subject = Subject::find($validated['subject_id']);

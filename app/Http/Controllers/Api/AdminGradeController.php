@@ -98,7 +98,7 @@ class AdminGradeController extends Controller
                     DB::raw("CONCAT(users.first_name, ' ', users.last_name) as teacher_name") 
                 )
                 ->orderBy('final_grades.school_year', 'desc')
-                ->orderBy('final_grades.semester', 'asc')
+                ->orderBy('final_grades.term', 'asc')
                 ->get();
 
             return response()->json($grades, 200);
@@ -183,12 +183,12 @@ class AdminGradeController extends Controller
         $sectionName = $advisoryClass ? "({$advisoryClass->section})" : "";
         $link = $advisoryClass ? "/teacher/advisory/{$advisoryClass->class_id}" : "/teacher/advisory";
         $currentTime = now()->toDateTimeString();
-        $semester = $grade->semester; 
+        $term = $grade->term; 
 
         DB::table('notifications')->insert([
             'id' => Str::uuid()->toString(),
             'user_id' => $grade->teacher_id,
-            'description' => "Your submitted {$subjectName} grade for {$student->first_name} {$student->last_name} {$sectionName} ({$semester} Semester) was approved.",
+            'description' => "Your submitted {$subjectName} grade for {$student->first_name} {$student->last_name} {$sectionName} ({$term} Term) was approved.",
             'link' => $link, 
             'is_read' => false,
             'created_at' => $currentTime, 
@@ -198,7 +198,7 @@ class AdminGradeController extends Controller
         DB::table('notifications')->insert([
             'id' => Str::uuid()->toString(),
             'user_id' => $grade->student_id,
-            'description' => "Your final grade in {$subjectName} for SY {$grade->school_year} ({$semester} Semester) is now ready to view.",
+            'description' => "Your final grade in {$subjectName} for SY {$grade->school_year} ({$term} Term) is now ready to view.",
             'link' => "/student/grades", 
             'is_read' => false,
             'created_at' => $currentTime, 

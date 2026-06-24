@@ -13,7 +13,7 @@ class Classroom extends Model
     protected $fillable = [
         'creator_id', 'section', 'strand_id', 'grade_level', 
         'subject_id', 'capacity', 'schedule', 'color_bg', 
-        'code', 'school_year', 'semester'
+        'code', 'school_year', 'term'
     ];
 
     protected $casts = [

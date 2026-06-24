@@ -12,7 +12,7 @@ class FinalGrade extends Model
 
     protected $fillable = [
         'student_id', 'subject_id', 'teacher_id', 'school_year', 
-        'semester', 'grade', 'status', 'admin_feedback'
+        'term', 'grade', 'status', 'admin_feedback'
     ];
 
     public function student()
