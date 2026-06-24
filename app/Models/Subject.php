@@ -10,7 +10,7 @@ class Subject extends Model
 {
     use HasUuids, SoftDeletes;
 
-    protected $fillable = ['code', 'description', 'strand_id', 'grade_level', 'semester'];
+    protected $fillable = ['code', 'description', 'strand_id', 'grade_level', 'term'];
 
     public function strand()
     {

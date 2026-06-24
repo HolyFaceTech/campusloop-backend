@@ -17,7 +17,7 @@
 
     <div class="date-section">
         <strong>Date Generated:</strong> {{ \Carbon\Carbon::now()->format('F d, Y h:i A') }}<br>
-        <strong>Active Configuration:</strong> SY {{ $settings['school_year'] ?? 'Not Set' }} | {{ isset($settings['semester']) ? $settings['semester'].' Semester' : 'Not Set' }}
+        <strong>Active Configuration:</strong> SY {{ $settings['school_year'] ?? 'Not Set' }} | {{ isset($settings['term']) ? $settings['term'].' Term' : 'Not Set' }}
     </div>
 
     <div class="report-title">
