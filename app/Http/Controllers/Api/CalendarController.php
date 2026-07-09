@@ -25,8 +25,7 @@ class CalendarController extends Controller
         try {
             $start = $request->query('start');
             $end = $request->query('end');
-
-            $query = Announcement::with('files')->where('creator_id', $request->user()->id);
+            $query = Announcement::with('files');
 
             // Kung may date range, i-filter lang ang mga pasok sa buwan na iyon
             if ($start && $end) {
@@ -78,8 +77,7 @@ class CalendarController extends Controller
         try {
             $now = now();
             
-            $hasActive = Announcement::where('creator_id', $request->user()->id)
-                ->where('publish_from', '<=', $now)
+            $hasActive = Announcement::where('publish_from', '<=', $now)
                 ->where('valid_until', '>=', $now)
                 ->exists();
 
