@@ -15,13 +15,44 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
 
 
 class AuthController extends Controller
 {
+    /**
+     * Helper function para mag-check ng Rate Limit base sa Email
+     */
+    private function checkRateLimit($action, $email, $maxAttempts = 5, $decayMinutes = 1)
+    {
+        // Linisin ang email
+        $cleanEmail = strtolower(trim($email));
+        $throttleKey = "{$action}-attempt:{$cleanEmail}";
+
+        if (RateLimiter::tooManyAttempts($throttleKey, $maxAttempts)) {
+            $seconds = RateLimiter::availableIn($throttleKey);
+            Log::warning("Too many {$action} attempts for email: {$cleanEmail}");
+            return [
+                'is_limited' => true,
+                'message' => "Too many attempts. Please try again in {$seconds} seconds.",
+                'key' => $throttleKey
+            ];
+        }
+
+        // I-hit ang rate limiter para madagdagan ang count
+        RateLimiter::hit($throttleKey, $decayMinutes * 60);
+
+        return [
+            'is_limited' => false,
+            'key' => $throttleKey
+        ];
+    }
+
     // LOGIN
     public function login(Request $request)
     {
+        $request->merge(['email' => strtolower(trim($request->email))]);
+
         $request->validate([
             'email' => 'required|email',
             'password' => 'required',
@@ -29,6 +60,11 @@ class AuthController extends Controller
         ]);
 
         try {
+            $rateLimit = $this->checkRateLimit('login', $request->email, 5, 1);
+            if ($rateLimit['is_limited']) {
+                return response()->json(['message' => $rateLimit['message']], 429);
+            }
+
             $user = User::where('email', $request->email)->first();
 
             if (!$user || !Hash::check($request->password, $user->password)) {
@@ -43,6 +79,8 @@ class AuthController extends Controller
                 ], 403);
             }
 
+            RateLimiter::clear($rateLimit['key']);
+            
             // Single Session Policy
             $user->tokens()->delete();
             // Generate New Token at Update Last Login
@@ -100,12 +138,19 @@ class AuthController extends Controller
     // FORGOT PASSWORD
     public function forgotPassword(Request $request)
     {
+        $request->merge(['email' => strtolower(trim($request->email))]);
+
         $request->validate([
             'email' => 'required|email',
             'g-recaptcha-response' => ['required', new Recaptcha()]
         ]);
 
         try {
+            $rateLimit = $this->checkRateLimit('forgot-password', $request->email, 3, 5);
+            if ($rateLimit['is_limited']) {
+                return response()->json(['message' => $rateLimit['message']], 429);
+            }
+
             $user = User::where('email', $request->email)->first();
 
             if (!$user) {
@@ -157,6 +202,8 @@ class AuthController extends Controller
     // RESET PASSWORD
     public function resetPassword(Request $request)
     {
+        $request->merge(['email' => strtolower(trim($request->email))]);
+
         $request->validate([
             'email' => 'required|email',
             'token' => 'required',
@@ -172,6 +219,11 @@ class AuthController extends Controller
         ]);
 
         try {
+            $rateLimit = $this->checkRateLimit('reset-password', $request->email, 5, 10);
+            if ($rateLimit['is_limited']) {
+                return response()->json(['message' => $rateLimit['message']], 429);
+            }
+
             // I-verify ang Token at Email sa database
             $resetRequest = DB::table('password_reset_tokens')
                 ->where('email', $request->email)
@@ -199,6 +251,8 @@ class AuthController extends Controller
             // Burahin ang ginamit na token para hindi na magamit ulit
             DB::table('password_reset_tokens')->where('email', $request->email)->delete();
 
+            RateLimiter::clear($rateLimit['key']);
+
             ActivityLog::create([
                 'user_id' => $user->id,
                 'action' => 'Reset Account Password',
@@ -221,11 +275,18 @@ class AuthController extends Controller
     // EMAIL VERIFICATION
     public function resendVerificationEmail(Request $request)
     {
+        $request->merge(['email' => strtolower(trim($request->email))]);
+
         $request->validate([
             'email' => 'required|email'
         ]);
 
         try {
+            $rateLimit = $this->checkRateLimit('resend-verification', $request->email, 3, 5);
+            if ($rateLimit['is_limited']) {
+                return response()->json(['message' => $rateLimit['message']], 429);
+            }
+
             $user = User::where('email', $request->email)->first();
 
             if (!$user) {
@@ -291,6 +352,11 @@ class AuthController extends Controller
                 return response()->json(['message' => 'User not found.'], 404);
             }
 
+            $rateLimit = $this->checkRateLimit('verify-email', $user->email, 5, 2);
+            if ($rateLimit['is_limited']) {
+                return response()->json(['message' => $rateLimit['message']], 429);
+            }
+
             // ONE-TIME USE - Kung verified it means nagamit na ang link
             if ($user->email_verified_at) {
                 return response()->json(['message' => 'This verification link has already been used. Your account is already active.'], 400);
@@ -310,6 +376,8 @@ class AuthController extends Controller
                 'email_verified_at' => now(),
                 'status' => 'active' 
             ]);
+
+            RateLimiter::clear($rateLimit['key']);
 
             ActivityLog::create([
                 'user_id' => $user->id,

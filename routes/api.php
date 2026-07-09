@@ -58,13 +58,11 @@ use App\Http\Controllers\Api\StudentNotificationController;
 Route::get('/settings', [SystemSettingController::class, 'index']);
 
 // Public Auth Routes
-Route::middleware('throttle:5,1')->group(function () {
-    Route::post('/login', [AuthController::class, 'login']);
-    Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
-    Route::post('/reset-password', [AuthController::class, 'resetPassword']);
-    Route::post('/resend-verification', [AuthController::class, 'resendVerificationEmail']);
-    Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
-});
+Route::post('/login', [AuthController::class, 'login']);
+Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
+Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+Route::post('/resend-verification', [AuthController::class, 'resendVerificationEmail']);
+Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
 
 // Protected Routes
 Route::middleware('auth:sanctum')->group(function () {
