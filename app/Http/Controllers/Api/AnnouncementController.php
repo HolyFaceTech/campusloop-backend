@@ -18,7 +18,7 @@ use App\Support\PublicFileStorage;
 
 class AnnouncementController extends Controller
 {
-    // SECURITY 
+    // security
     private function checkAdmin(Request $request)
     {
         return $request->user() && $request->user()->role === 'admin';
@@ -40,7 +40,7 @@ class AnnouncementController extends Controller
                     ->with(['user', 'replies.user'])
                     ->orderBy('created_at', 'asc');
                 }
-            ])->where('creator_id', $request->user()->id);
+            ]);
 
             if ($request->has('search') && !empty($request->search)) {
                 $search = $request->search;
@@ -196,7 +196,7 @@ class AnnouncementController extends Controller
         if (!$this->checkAdmin($request)) return response()->json(['message' => 'Unauthorized access. Admin privileges required.'], 403);
 
         try {
-            $announcement = Announcement::where('creator_id', $request->user()->id)->findOrFail($id);
+            $announcement = Announcement::findOrFail($id);
 
             $validated = $request->validate([
                 'title' => 'required|string|max:255',
@@ -247,11 +247,29 @@ class AnnouncementController extends Controller
             }
 
             $announcementTitle = Str::limit($announcement->title, 25);
+            $currentUser = $request->user();
+            $adminName = $currentUser->first_name . ' ' . $currentUser->last_name;
+
+            if ($announcement->creator_id !== $currentUser->id) {
+                DB::table('notifications')->insert([
+                    'id' => Str::uuid()->toString(),
+                    'user_id' => $announcement->creator_id,
+                    'description' => "Admin {$adminName} updated your announcement: '{$announcementTitle}'.",
+                    'link' => "/admin/announcements",
+                    'is_read' => false,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                $logDescription = "Updated the announcement '{$announcementTitle}' originally created by another admin.";
+            } else {
+                $logDescription = "Updated their global announcement: '{$announcementTitle}'.";
+            }
 
             ActivityLog::create([
-                'user_id' => $request->user()->id,
+                'user_id' => $currentUser->id,
                 'action' => 'Updated Announcement',
-                'description' => "Updated the global announcement: '{$announcementTitle}'."
+                'description' => $logDescription
             ]);
 
             DB::commit();
@@ -272,8 +290,9 @@ class AnnouncementController extends Controller
         try {
             DB::beginTransaction();
 
-            $announcement = Announcement::where('creator_id', $request->user()->id)->findOrFail($id);
+            $announcement = Announcement::findOrFail($id);
             $announcementTitle = Str::limit($announcement->title, 25);
+            $creatorId = $announcement->creator_id;
 
             // storage path
             foreach ($announcement->files as $file) {
@@ -281,11 +300,29 @@ class AnnouncementController extends Controller
             }
 
             $announcement->delete(); 
+            $currentUser = $request->user();
+            $adminName = $currentUser->first_name . ' ' . $currentUser->last_name;
+
+            if ($creatorId !== $currentUser->id) {
+                DB::table('notifications')->insert([
+                    'id' => Str::uuid()->toString(),
+                    'user_id' => $creatorId,
+                    'description' => "Admin {$adminName} moved your announcement '{$announcementTitle}' to the recycle bin.",
+                    'link' => "/admin/recycle-bin",
+                    'is_read' => false,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                $logDescription = "Moved the announcement '{$announcementTitle}' (created by another admin) to the recycle bin.";
+            } else {
+                $logDescription = "Moved their global announcement '{$announcementTitle}' to the recycle bin.";
+            }
 
             ActivityLog::create([
-                'user_id' => $request->user()->id,
+                'user_id' => $currentUser->id,
                 'action' => 'Deleted Announcement',
-                'description' => "Moved the global announcement '{$announcementTitle}' to the recycle bin."
+                'description' => $logDescription
             ]);
 
             DB::commit();
@@ -308,16 +345,44 @@ class AnnouncementController extends Controller
         try {
             DB::beginTransaction();
             $count = count($request->ids);
+            $announcementsToDelete = Announcement::whereIn('id', $request->ids)->get();
+            $currentUser = $request->user();
+            $adminName = $currentUser->first_name . ' ' . $currentUser->last_name;
+            $notifications = [];
+            $othersCount = 0;
 
-            Announcement::where('creator_id', $request->user()->id)
-                ->whereIn('id', $request->ids)
-                ->delete();
+            foreach ($announcementsToDelete as $ann) {
+                if ($ann->creator_id !== $currentUser->id) {
+                    $annTitle = Str::limit($ann->title, 25);
+                    $notifications[] = [
+                        'id' => Str::uuid()->toString(),
+                        'user_id' => $ann->creator_id,
+                        'description' => "Admin {$adminName} moved your announcement '{$annTitle}' to the recycle bin.",
+                        'link' => "/admin/recycle-bin",
+                        'is_read' => false,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                    $othersCount++;
+                }
+            }
+
+            if (!empty($notifications)) {
+                DB::table('notifications')->insert($notifications);
+            }
+
+            Announcement::whereIn('id', $request->ids)->delete();
 
             if ($count > 0) {
+                $logDesc = "Moved {$count} selected announcements to the recycle bin.";
+                if ($othersCount > 0) {
+                    $logDesc .= " ({$othersCount} of which were created by other admins).";
+                }
+
                 ActivityLog::create([
-                    'user_id' => $request->user()->id,
+                    'user_id' => $currentUser->id,
                     'action' => 'Bulk Deleted Announcements',
-                    'description' => "Moved {$count} selected announcements to the recycle bin."
+                    'description' => $logDesc
                 ]);
             }
 
